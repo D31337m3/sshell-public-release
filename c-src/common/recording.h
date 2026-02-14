@@ -13,7 +13,8 @@ typedef struct {
     FILE *file;
     bool active;
     time_t start_time;
-    double last_event_time;
+    double start_ts;
+    double last_event_ts;
     int width;
     int height;
 } recording_t;

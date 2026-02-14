@@ -7,11 +7,13 @@
 #include "../common/config.h"
 #include "../common/logger.h"
 #include "../common/metamask_auth.h"
+#include "../common/daemon_preset.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
@@ -24,6 +26,8 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <sys/select.h>
+#include <ctype.h>
+#include <json-c/json.h>
 
 static daemon_t *g_daemon = NULL;
 static bool g_tcp_mode = true;
@@ -34,6 +38,8 @@ static bool g_auth_required = true;
 static char g_wallet_allowlist_path[512] = {0};
 static char g_ssh_allowlist_path[512] = {0};
 static char g_single_wallet[128] = {0};
+static log_level_t g_log_level = LOG_LEVEL_INFO;
+static time_t g_daemon_started_at = 0;
 
 static void signal_handler(int sig) {
     (void)sig;
@@ -57,8 +63,85 @@ int daemon_init(daemon_t *daemon) {
 
     for (int i = 0; i < MAX_SESSIONS; i++) {
         multiuser_init(&daemon->multiuser[i]);
+        memset(&daemon->recordings[i], 0, sizeof(daemon->recordings[i]));
+        daemon->recording_paths[i][0] = '\0';
     }
     return 0;
+}
+
+static void daemon_preset_path(char *out, size_t out_size) {
+    if (!out || out_size == 0) {
+        return;
+    }
+    snprintf(out, out_size, "%s/daemon.json", g_config.config_dir);
+}
+
+static void apply_daemon_preset_if_present(void) {
+    char path[1024];
+    daemon_preset_path(path, sizeof(path));
+
+    if (access(path, R_OK) != 0) {
+        return;
+    }
+
+    daemon_preset_t preset;
+    if (!daemon_preset_load(path, &preset)) {
+        return;
+    }
+
+    if (preset.has_tcp_mode) {
+        g_tcp_mode = preset.tcp_mode;
+    }
+    if (preset.has_host) {
+        snprintf(g_bind_host, sizeof(g_bind_host), "%s", preset.host);
+        g_tcp_mode = true;
+    }
+    if (preset.has_port) {
+        g_bind_port = preset.port;
+        g_tcp_mode = true;
+    }
+    if (preset.has_ufw_auto) {
+        g_ufw_auto = preset.ufw_auto;
+    }
+    if (preset.has_auth_required) {
+        g_auth_required = preset.auth_required;
+    }
+    if (preset.has_wallet) {
+        snprintf(g_single_wallet, sizeof(g_single_wallet), "%s", preset.wallet);
+        g_auth_required = true;
+    }
+    if (preset.has_wallet_allowlist) {
+        snprintf(g_wallet_allowlist_path, sizeof(g_wallet_allowlist_path), "%s", preset.wallet_allowlist_path);
+    }
+    if (preset.has_ssh_allowlist) {
+        snprintf(g_ssh_allowlist_path, sizeof(g_ssh_allowlist_path), "%s", preset.ssh_allowlist_path);
+    }
+    if (preset.has_log_level) {
+        g_log_level = preset.log_level;
+    }
+}
+
+static bool parse_log_level_arg(const char *value, log_level_t *out) {
+    if (!value || !out) {
+        return false;
+    }
+    if (strcasecmp(value, "debug") == 0) {
+        *out = LOG_LEVEL_DEBUG;
+        return true;
+    }
+    if (strcasecmp(value, "info") == 0) {
+        *out = LOG_LEVEL_INFO;
+        return true;
+    }
+    if (strcasecmp(value, "warn") == 0 || strcasecmp(value, "warning") == 0) {
+        *out = LOG_LEVEL_WARN;
+        return true;
+    }
+    if (strcasecmp(value, "error") == 0) {
+        *out = LOG_LEVEL_ERROR;
+        return true;
+    }
+    return false;
 }
 
 static int find_session_index_by_ptr(daemon_t *daemon, session_t *session) {
@@ -154,6 +237,8 @@ static void load_existing_sessions(daemon_t *daemon) {
                 int index = daemon->session_count;
                 daemon->sessions[index] = session;
                 multiuser_init(&daemon->multiuser[index]);
+                recording_init(&daemon->recordings[index], session->id, 80, 24);
+                daemon->recording_paths[index][0] = '\0';
                 daemon->session_count++;
             } else {
                 session_free(session);
@@ -171,6 +256,8 @@ static void load_existing_sessions(daemon_t *daemon) {
                 int index = daemon->session_count;
                 daemon->sessions[index] = session;
                 multiuser_init(&daemon->multiuser[index]);
+                recording_init(&daemon->recordings[index], session->id, 80, 24);
+                daemon->recording_paths[index][0] = '\0';
                 daemon->session_count++;
             } else {
                 session_free(session);
@@ -426,6 +513,8 @@ static void handle_create(daemon_t *daemon, const message_t *msg, int client_fd)
     int index = daemon->session_count;
     daemon->sessions[index] = session;
     multiuser_init(&daemon->multiuser[index]);
+    recording_init(&daemon->recordings[index], session->id, 80, 24);
+    daemon->recording_paths[index][0] = '\0';
     daemon->session_count++;
     session_save(session, g_config.session_dir);
 
@@ -486,7 +575,22 @@ static bool handle_attach_register(daemon_t *daemon,
 
     response_t resp = {0};
     resp.status = STATUS_OK;
-    snprintf(resp.message, sizeof(resp.message), "Attached to session '%s'", session->name);
+
+    int session_index = find_session_index_by_ptr(daemon, session);
+    int users = 0;
+    bool recording_active = false;
+    if (session_index >= 0) {
+        users = daemon->multiuser[session_index].user_count;
+        recording_active = recording_is_active(&daemon->recordings[session_index]);
+    }
+
+    snprintf(resp.message,
+             sizeof(resp.message),
+             "Attached to session '%s' (id:%s users:%d rec:%s)",
+             session->name,
+             session->id,
+             users,
+             recording_active ? "on" : "off");
     send_response(client_fd, &resp);
 
     make_nonblocking(client_fd);
@@ -584,6 +688,11 @@ static void handle_kill(daemon_t *daemon, const message_t *msg, int client_fd) {
             for (int shift = index; shift < daemon->session_count - 1; shift++) {
                 daemon->sessions[shift] = daemon->sessions[shift + 1];
                 daemon->multiuser[shift] = daemon->multiuser[shift + 1];
+                daemon->recordings[shift] = daemon->recordings[shift + 1];
+                snprintf(daemon->recording_paths[shift],
+                         sizeof(daemon->recording_paths[shift]),
+                         "%s",
+                         daemon->recording_paths[shift + 1]);
             }
             daemon->session_count--;
             break;
@@ -681,6 +790,9 @@ static void handle_status(daemon_t *daemon, const message_t *msg, int client_fd)
     if (!session && msg->session_name[0]) {
         session = find_session_by_name(daemon, msg->session_name);
     }
+    if (!session && msg->share_token[0]) {
+        session = find_session_by_share_token(daemon, msg->share_token);
+    }
 
     if (!session) {
         send_basic_response(client_fd, STATUS_NOT_FOUND, "Session not found");
@@ -696,16 +808,51 @@ static void handle_status(daemon_t *daemon, const message_t *msg, int client_fd)
     snprintf(resp.message, sizeof(resp.message), "Session info");
     send_response(client_fd, &resp);
 
-    char *json = session_to_json(session);
-    if (!json) {
+    int session_index = find_session_index_by_ptr(daemon, session);
+
+    char *base_json = session_to_json(session);
+    if (!base_json) {
         return;
     }
 
-    uint32_t len = (uint32_t)strlen(json) + 1;
-    if (write(client_fd, &len, sizeof(len)) == sizeof(len)) {
-        write(client_fd, json, len);
+    struct json_object *root = json_tokener_parse(base_json);
+    free(base_json);
+    if (!root) {
+        return;
     }
-    free(json);
+
+    int users = 0;
+    bool sharing_enabled = false;
+    bool recording_active = false;
+    const char *recording_file = "";
+    if (session_index >= 0) {
+        users = daemon->multiuser[session_index].user_count;
+        sharing_enabled = daemon->multiuser[session_index].sharing_enabled;
+        recording_active = recording_is_active(&daemon->recordings[session_index]);
+        recording_file = daemon->recording_paths[session_index];
+    }
+
+    json_object_object_add(root, "user_count", json_object_new_int(users));
+    json_object_object_add(root, "sharing_enabled", json_object_new_boolean(sharing_enabled));
+    json_object_object_add(root, "recording_active", json_object_new_boolean(recording_active));
+    if (recording_file && recording_file[0]) {
+        json_object_object_add(root, "recording_file", json_object_new_string(recording_file));
+    }
+    if (g_daemon_started_at > 0) {
+        time_t now = time(NULL);
+        json_object_object_add(root,
+                               "daemon_uptime_seconds",
+                               json_object_new_int64((int64_t)(now - g_daemon_started_at)));
+    }
+
+    const char *out_str = json_object_to_json_string(root);
+    if (out_str) {
+        uint32_t len = (uint32_t)strlen(out_str) + 1;
+        if (write(client_fd, &len, sizeof(len)) == sizeof(len)) {
+            write(client_fd, out_str, len);
+        }
+    }
+    json_object_put(root);
 }
 
 static void handle_share(daemon_t *daemon, const message_t *msg, int client_fd, bool peer_is_localhost) {
@@ -752,6 +899,8 @@ static void handle_share(daemon_t *daemon, const message_t *msg, int client_fd, 
              session->name,
              mu->share_token);
     send_response(client_fd, &resp);
+
+    log_info("share enabled session=%s owner=%s", session->name, mu->share_owner_id);
 }
 
 static bool handle_join(daemon_t *daemon, const message_t *msg, int client_fd) {
@@ -802,6 +951,106 @@ static void handle_stopshare(daemon_t *daemon, const message_t *msg, int client_
              "Sharing stopped for %d session(s)",
              sessions_disabled);
     send_response(client_fd, &resp);
+
+    log_info("share disabled owner=%s count=%d", owner, sessions_disabled);
+}
+
+static void handle_rec_start(daemon_t *daemon, const message_t *msg, int client_fd) {
+    session_t *session = NULL;
+    if (msg->session_id[0]) {
+        session = find_session_by_id(daemon, msg->session_id);
+    }
+    if (!session && msg->session_name[0]) {
+        session = find_session_by_name(daemon, msg->session_name);
+    }
+    if (!session) {
+        send_basic_response(client_fd, STATUS_NOT_FOUND, "Session not found");
+        return;
+    }
+
+    int index = find_session_index_by_ptr(daemon, session);
+    if (index < 0) {
+        send_basic_response(client_fd, STATUS_ERROR, "Internal error");
+        return;
+    }
+
+    if (recording_is_active(&daemon->recordings[index])) {
+        send_basic_response(client_fd, STATUS_ERROR, "Recording already active");
+        return;
+    }
+
+    int width = (msg->cols > 0) ? msg->cols : 80;
+    int height = (msg->rows > 0) ? msg->rows : 24;
+
+    char rec_dir[1024];
+    snprintf(rec_dir, sizeof(rec_dir), "%s/recordings", g_config.config_dir);
+    mkdir(rec_dir, 0700);
+
+    time_t now = time(NULL);
+    int wrote = snprintf(daemon->recording_paths[index],
+                         sizeof(daemon->recording_paths[index]),
+                         "%s/%s-%ld.cast",
+                         rec_dir,
+                         session->id,
+                         (long)now);
+    if (wrote < 0 || (size_t)wrote >= sizeof(daemon->recording_paths[index])) {
+        send_basic_response(client_fd, STATUS_ERROR, "Recording path too long");
+        daemon->recording_paths[index][0] = '\0';
+        return;
+    }
+
+    if (recording_start(&daemon->recordings[index], daemon->recording_paths[index], width, height) < 0) {
+        daemon->recording_paths[index][0] = '\0';
+        send_basic_response(client_fd, STATUS_ERROR, "Failed to start recording");
+        return;
+    }
+
+    response_t resp = {0};
+    resp.status = STATUS_OK;
+    snprintf(resp.message, sizeof(resp.message), "%s", daemon->recording_paths[index]);
+    send_response(client_fd, &resp);
+
+    log_info("recording started session=%s file=%s", session->name, daemon->recording_paths[index]);
+}
+
+static void handle_rec_stop(daemon_t *daemon, const message_t *msg, int client_fd) {
+    session_t *session = NULL;
+    if (msg->session_id[0]) {
+        session = find_session_by_id(daemon, msg->session_id);
+    }
+    if (!session && msg->session_name[0]) {
+        session = find_session_by_name(daemon, msg->session_name);
+    }
+    if (!session) {
+        send_basic_response(client_fd, STATUS_NOT_FOUND, "Session not found");
+        return;
+    }
+
+    int index = find_session_index_by_ptr(daemon, session);
+    if (index < 0) {
+        send_basic_response(client_fd, STATUS_ERROR, "Internal error");
+        return;
+    }
+
+    if (!recording_is_active(&daemon->recordings[index])) {
+        send_basic_response(client_fd, STATUS_ERROR, "Recording not active");
+        return;
+    }
+
+    if (recording_stop(&daemon->recordings[index]) < 0) {
+        send_basic_response(client_fd, STATUS_ERROR, "Failed to stop recording");
+        return;
+    }
+
+    response_t resp = {0};
+    resp.status = STATUS_OK;
+    snprintf(resp.message,
+             sizeof(resp.message),
+             "%s",
+             daemon->recording_paths[index][0] ? daemon->recording_paths[index] : "Recording stopped");
+    send_response(client_fd, &resp);
+
+    log_info("recording stopped session=%s", session->name);
 }
 
 static bool handle_client(daemon_t *daemon, int client_fd, bool peer_is_localhost) {
@@ -811,8 +1060,8 @@ static bool handle_client(daemon_t *daemon, int client_fd, bool peer_is_localhos
         return false;
     }
 
-    bool is_join = (msg.command == CMD_JOIN);
-    if (!is_join && !is_authorized_request(&msg, peer_is_localhost)) {
+    bool allow_unauth = (msg.command == CMD_JOIN) || (msg.command == CMD_STATUS && msg.share_token[0] != '\0');
+    if (!allow_unauth && !is_authorized_request(&msg, peer_is_localhost)) {
         send_basic_response(client_fd, STATUS_ERROR, "Unauthorized");
         close(client_fd);
         return false;
@@ -858,6 +1107,12 @@ static bool handle_client(daemon_t *daemon, int client_fd, bool peer_is_localhos
         case CMD_STOPSHARE:
             handle_stopshare(daemon, &msg, client_fd, peer_is_localhost);
             break;
+        case CMD_REC_START:
+            handle_rec_start(daemon, &msg, client_fd);
+            break;
+        case CMD_REC_STOP:
+            handle_rec_stop(daemon, &msg, client_fd);
+            break;
         default:
             send_basic_response(client_fd, STATUS_ERROR, "Command not implemented");
             break;
@@ -881,7 +1136,12 @@ static void daemon_event_loop(daemon_t *daemon) {
         for (int i = 0; i < daemon->session_count; i++) {
             session_t *session = daemon->sessions[i];
             multiuser_session_t *mu = &daemon->multiuser[i];
-            if (mu->user_count <= 0 || session->master_fd < 0) {
+            if (session->master_fd < 0) {
+                continue;
+            }
+
+            bool watch_pty = (mu->user_count > 0) || recording_is_active(&daemon->recordings[i]);
+            if (!watch_pty) {
                 continue;
             }
 
@@ -890,13 +1150,15 @@ static void daemon_event_loop(daemon_t *daemon) {
                 maxfd = session->master_fd;
             }
 
-            for (int u = 0; u < mu->user_count; u++) {
-                if (!mu->users[u].active) {
-                    continue;
-                }
-                FD_SET(mu->users[u].fd, &readfds);
-                if (mu->users[u].fd > maxfd) {
-                    maxfd = mu->users[u].fd;
+            if (mu->user_count > 0) {
+                for (int u = 0; u < mu->user_count; u++) {
+                    if (!mu->users[u].active) {
+                        continue;
+                    }
+                    FD_SET(mu->users[u].fd, &readfds);
+                    if (mu->users[u].fd > maxfd) {
+                        maxfd = mu->users[u].fd;
+                    }
                 }
             }
         }
@@ -938,7 +1200,12 @@ static void daemon_event_loop(daemon_t *daemon) {
         for (int i = 0; i < daemon->session_count; i++) {
             session_t *session = daemon->sessions[i];
             multiuser_session_t *mu = &daemon->multiuser[i];
-            if (mu->user_count <= 0 || session->master_fd < 0) {
+            if (session->master_fd < 0) {
+                continue;
+            }
+
+            bool watch_pty = (mu->user_count > 0) || recording_is_active(&daemon->recordings[i]);
+            if (!watch_pty) {
                 continue;
             }
 
@@ -947,6 +1214,11 @@ static void daemon_event_loop(daemon_t *daemon) {
                 ssize_t n = read(session->master_fd, buffer, sizeof(buffer));
                 if (n > 0) {
                     session_update_activity(session);
+
+                    if (recording_is_active(&daemon->recordings[i])) {
+                        recording_write(&daemon->recordings[i], buffer, (size_t)n);
+                    }
+
                     for (int u = 0; u < mu->user_count; ) {
                         attached_user_t *user = &mu->users[u];
                         if (!user->active) {
@@ -1062,6 +1334,11 @@ void daemon_cleanup(daemon_t *daemon) {
                 }
             }
             daemon->multiuser[i].user_count = 0;
+
+            if (recording_is_active(&daemon->recordings[i])) {
+                recording_stop(&daemon->recordings[i]);
+            }
+
             session_save(daemon->sessions[i], g_config.session_dir);
             session_free(daemon->sessions[i]);
             daemon->sessions[i] = NULL;
@@ -1071,6 +1348,9 @@ void daemon_cleanup(daemon_t *daemon) {
 
 int main(int argc, char **argv) {
     bool foreground = false;
+
+    config_init();
+    apply_daemon_preset_if_present();
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--no-fork") == 0 || strcmp(argv[i], "-f") == 0) {
@@ -1120,6 +1400,19 @@ int main(int argc, char **argv) {
             }
             snprintf(g_single_wallet, sizeof(g_single_wallet), "%s", argv[++i]);
             g_auth_required = true;
+        } else if (strcmp(argv[i], "--log-level") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --log-level requires a value (debug|info|warn|error)\n");
+                return 1;
+            }
+            log_level_t level;
+            if (!parse_log_level_arg(argv[++i], &level)) {
+                fprintf(stderr, "Error: invalid --log-level value\n");
+                return 1;
+            }
+            g_log_level = level;
+        } else if (strcmp(argv[i], "--debug") == 0) {
+            g_log_level = LOG_LEVEL_DEBUG;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printf("Usage: %s [OPTIONS]\n", argv[0]);
             printf("  -f, --no-fork    Run in foreground\n");
@@ -1132,25 +1425,28 @@ int main(int argc, char **argv) {
             printf("  --wallet ADDRESS         Single authorized wallet address\n");
             printf("  --ssh-allowlist PATH     Authorized ssh-key IDs (one per line)\n");
             printf("  --insecure-no-auth       Disable auth checks (NOT recommended)\n");
+            printf("  --log-level LEVEL        Log verbosity (debug|info|warn|error)\n");
+            printf("  --debug                  Alias for --log-level debug\n");
             printf("  -h, --help       Show this help\n");
             printf("  -v, --version    Show version\n");
             return 0;
         } else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
-            printf("SSHell v1.6.1  -  (C) - D31337m3.com\n");
+            printf("SSHell v1.6.2  -  (C) - D31337m3.com\n");
             return 0;
         }
     }
 
-    config_init();
     if (config_ensure_directories() < 0) {
         fprintf(stderr, "Failed to create config directories\n");
         return 1;
     }
 
-    if (logger_init(g_config.log_file, LOG_LEVEL_INFO, foreground) < 0) {
+    if (logger_init(g_config.log_file, g_log_level, foreground) < 0) {
         fprintf(stderr, "Failed to initialize logger\n");
         return 1;
     }
+
+    g_daemon_started_at = time(NULL);
 
     daemon_t daemon;
     daemon_init(&daemon);

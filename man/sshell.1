@@ -1,4 +1,4 @@
-.TH SSHELL 1 "February 2026" "SShell 1.6.1" "User Commands"
+.TH SSHELL 1 "February 2026" "SShell 1.6.3" "User Commands"
 .SH NAME
 sshell \- persistent shell session manager
 .SH SYNOPSIS
@@ -52,6 +52,12 @@ Join a shared collaborative session using the provided token.
 Disable sharing (and disconnect guest users) for the specified session. If no
 session is provided, stops sharing for all sessions owned by the authenticated
 inviter on that daemon.
+.TP
+.B sshell rec-start \fI\,TARGET\/\fR
+Start asciicast v2 recording for a session. Prints the output .cast file path.
+.TP
+.B sshell rec-stop \fI\,TARGET\/\fR
+Stop recording for a session. Prints the final .cast file path.
 .SH OPTIONS
 .TP
 .B \-\-host \fI\,HOST\/\fR
@@ -121,6 +127,15 @@ Join a shared session:
 .TP
 Stop sharing (disconnect guests):
 .B sshell --stopshare build-task@host-name.com
+.TP
+Start recording a session:
+.B sshell rec-start build-task
+.TP
+Stop recording:
+.B sshell rec-stop build-task
+.TP
+Playback a recording:
+.B sshell-player ~/.sshell/recordings/<file>.cast 2.0
 .TP
 Rename a session:
 .B sshell rename old-name new-name

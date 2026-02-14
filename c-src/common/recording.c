@@ -17,20 +17,30 @@ static double get_timestamp() {
     return tv.tv_sec + tv.tv_usec / 1000000.0;
 }
 
-static void json_escape(const char *input, char *output, size_t output_size) {
+static void json_escape_len(const char *input, size_t input_len, char *output, size_t output_size) {
     size_t j = 0;
-    for (size_t i = 0; input[i] && j < output_size - 2; i++) {
-        switch (input[i]) {
+    if (!input || !output || output_size == 0) {
+        return;
+    }
+
+    for (size_t i = 0; i < input_len && j < output_size - 2; i++) {
+        unsigned char c = (unsigned char)input[i];
+        switch (c) {
             case '"':  output[j++] = '\\'; output[j++] = '"'; break;
             case '\\': output[j++] = '\\'; output[j++] = '\\'; break;
             case '\n': output[j++] = '\\'; output[j++] = 'n'; break;
             case '\r': output[j++] = '\\'; output[j++] = 'r'; break;
             case '\t': output[j++] = '\\'; output[j++] = 't'; break;
             default:
-                if (input[i] >= 32 && input[i] < 127) {
-                    output[j++] = input[i];
+                if (c >= 32 && c < 127) {
+                    output[j++] = (char)c;
                 } else {
-                    j += snprintf(output + j, output_size - j, "\\u%04x", (unsigned char)input[i]);
+                    int wrote = snprintf(output + j, output_size - j, "\\u%04x", c);
+                    if (wrote < 0) {
+                        output[j] = '\0';
+                        return;
+                    }
+                    j += (size_t)wrote;
                 }
                 break;
         }
@@ -60,9 +70,10 @@ int recording_start(recording_t *rec, const char *filepath, int width, int heigh
     
     /* Write asciicast v2 header */
     rec->start_time = time(NULL);
+    rec->start_ts = get_timestamp();
     rec->width = width;
     rec->height = height;
-    rec->last_event_time = 0;
+    rec->last_event_ts = 0;
     
     fprintf(rec->file, "{\"version\": 2, \"width\": %d, \"height\": %d, \"timestamp\": %ld}\n",
             width, height, rec->start_time);
@@ -78,19 +89,31 @@ int recording_write(recording_t *rec, const char *data, size_t len) {
     if (!rec->active || !rec->file) {
         return -1;
     }
+
+    if (!data || len == 0) {
+        return 0;
+    }
+
+    /* Avoid unbounded allocations on pathological output */
+    if (len > 256 * 1024) {
+        len = 256 * 1024;
+    }
     
     double now = get_timestamp();
-    double elapsed = now - (rec->start_time + rec->last_event_time);
-    rec->last_event_time += elapsed;
+    double elapsed = now - rec->start_ts;
+    if (elapsed < rec->last_event_ts) {
+        elapsed = rec->last_event_ts;
+    }
+    rec->last_event_ts = elapsed;
     
     /* Escape JSON */
     char *escaped = malloc(len * 6 + 1);  // Worst case: all chars need escaping
     if (!escaped) return -1;
     
-    json_escape(data, escaped, len * 6 + 1);
+    json_escape_len(data, len, escaped, len * 6 + 1);
     
     /* Write event: [time, "o", "data"] */
-    fprintf(rec->file, "[%.3f, \"o\", \"%s\"]\n", rec->last_event_time, escaped);
+    fprintf(rec->file, "[%.3f, \"o\", \"%s\"]\n", elapsed, escaped);
     fflush(rec->file);
     
     free(escaped);
@@ -122,6 +145,15 @@ int recording_playback(const char *filepath, double speed) {
     
     char line[65536];
     bool first_line = true;
+    double prev_ts = 0.0;
+
+    if (speed <= 0.0) {
+        speed = 1.0;
+    }
+
+    if (speed > 50.0) {
+        speed = 50.0;
+    }
     
     while (fgets(line, sizeof(line), f)) {
         if (first_line) {
@@ -138,7 +170,6 @@ int recording_playback(const char *filepath, double speed) {
         if (sscanf(line, "[%lf, \"%c\", \"%[^\"]\"", &timestamp, &type, data) == 3) {
             if (type == 'o') {
                 /* Unescape and print */
-                size_t j = 0;
                 for (size_t i = 0; data[i]; i++) {
                     if (data[i] == '\\' && data[i+1]) {
                         i++;
@@ -148,19 +179,37 @@ int recording_playback(const char *filepath, double speed) {
                             case 't': putchar('\t'); break;
                             case '\\': putchar('\\'); break;
                             case '"': putchar('"'); break;
+                            case 'u': {
+                                /* Basic \uXXXX (ASCII only) */
+                                if (data[i+1] && data[i+2] && data[i+3] && data[i+4]) {
+                                    unsigned int code = 0;
+                                    if (sscanf(&data[i+1], "%4x", &code) == 1) {
+                                        if (code <= 0x7f) {
+                                            putchar((int)code);
+                                        } else {
+                                            putchar('?');
+                                        }
+                                    }
+                                    i += 4;
+                                }
+                                break;
+                            }
                             default: putchar(data[i]); break;
                         }
                     } else {
                         putchar(data[i]);
                     }
-                    j++;
                 }
                 fflush(stdout);
                 
-                /* Sleep for next event (adjusted by speed) */
-                if (timestamp > 0) {
-                    usleep((useconds_t)(timestamp * 1000000 / speed));
+                /* Sleep based on delta between events */
+                if (timestamp >= prev_ts) {
+                    double delta = timestamp - prev_ts;
+                    if (delta > 0) {
+                        usleep((useconds_t)((delta * 1000000.0) / speed));
+                    }
                 }
+                prev_ts = timestamp;
             }
         }
     }

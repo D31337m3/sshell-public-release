@@ -1,4 +1,4 @@
-.TH SSHELL-DAEMON 8 "February 2026" "SShell 1.6.1" "System Administration"
+.TH SSHELL-DAEMON 8 "February 2026" "SShell 1.6.2" "System Administration"
 .SH NAME
 sshell-daemon \- SShell session management daemon
 .SH SYNOPSIS
@@ -42,6 +42,12 @@ Allow SSH-key style identities from a file (one per line).
 .TP
 .B \-\-insecure-no-auth
 Disable auth checks (NOT recommended).
+.TP
+.B \-\-log-level \fI\,LEVEL\/\fR
+Log verbosity (debug|info|warn|error).
+.TP
+.B \-\-debug
+Alias for \fB--log-level debug\fR.
 .SH SIGNALS
 .TP
 .B SIGTERM, SIGINT
@@ -69,6 +75,21 @@ Session metadata files.
 .SH CONFIGURATION
 The daemon behavior can be customized by modifying the configuration
 in ~/.sshell/config (if implemented).
+.PP
+If the file \fI~/.sshell/daemon.json\fR exists, the daemon loads preset defaults
+from it at startup (CLI flags override). Example:
+.PP
+.nf
+{
+	"mode": "tcp",
+	"host": "0.0.0.0",
+	"port": 7444,
+	"ufw_auto": true,
+	"auth_required": true,
+	"wallet": "0x...",
+	"log_level": "info"
+}
+.fi
 .TP
 .B max_sessions
 Maximum number of concurrent sessions per user (default: 10).

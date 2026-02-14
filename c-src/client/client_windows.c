@@ -75,7 +75,7 @@ static HANDLE connect_daemon(void) {
 
 int main(int argc, char *argv[]) {
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
-        printf("SSHell v1.6.1  -  (C) - D31337m3.com\n");
+        printf("SSHell v1.6.3  -  (C) - D31337m3.com\n");
         return 0;
     }
     

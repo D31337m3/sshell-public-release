@@ -8,12 +8,15 @@
 #include "../common/session.h"
 #include "../common/protocol.h"
 #include "../common/multiuser.h"
+#include "../common/recording.h"
 
 #define MAX_SESSIONS 100
 
 typedef struct {
     session_t *sessions[MAX_SESSIONS];
     multiuser_session_t multiuser[MAX_SESSIONS];
+    recording_t recordings[MAX_SESSIONS];
+    char recording_paths[MAX_SESSIONS][512];
     int session_count;
     int server_fd;
     bool running;

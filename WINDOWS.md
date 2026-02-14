@@ -19,8 +19,8 @@ gcc -o sshell.exe c-src/client/client_windows.c -lws2_32
 ### Notes
 - Windows version uses Named Pipes instead of Unix sockets
 - Currently supports basic commands (list, attach, kill)
-- Full PTY support requires Windows 10+ ConPTY API
-- For full functionality, use WSL (Windows Subsystem for Linux)
+- Full PTY support requires Windows 10+ ConPTY API (Linux Port is more viable, use under Windows WSL)
+- For full functionality, use linux version under WSL (Windows Subsystem for Linux) on Windows 10 or newer.
 
 ### Recommended: Use WSL
 For the best experience on Windows, we recommend running SShell in WSL:

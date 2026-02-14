@@ -7,11 +7,13 @@
 
 #include "../common/session.h"
 #include "../common/protocol.h"
+#include "../common/multiuser.h"
 
 #define MAX_SESSIONS 100
 
 typedef struct {
     session_t *sessions[MAX_SESSIONS];
+    multiuser_session_t multiuser[MAX_SESSIONS];
     int session_count;
     int server_fd;
     bool running;

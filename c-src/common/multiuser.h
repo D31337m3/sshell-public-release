@@ -9,7 +9,7 @@
 #include <time.h>
 
 #define MAX_ATTACHED_USERS 10
-#define TOKEN_LENGTH 32
+#define TOKEN_LENGTH 64
 
 typedef enum {
     ACCESS_READ_ONLY,
@@ -21,6 +21,7 @@ typedef struct {
     char username[64];
     access_mode_t access;
     time_t connected_at;
+    bool is_guest;
     bool active;
 } attached_user_t;
 
@@ -28,6 +29,7 @@ typedef struct {
     attached_user_t users[MAX_ATTACHED_USERS];
     int user_count;
     char share_token[TOKEN_LENGTH + 1];
+    char share_owner_id[128];
     bool sharing_enabled;
 } multiuser_session_t;
 
@@ -42,7 +44,7 @@ void multiuser_disable_sharing(multiuser_session_t *mu);
 
 /* Add user to session */
 int multiuser_add_user(multiuser_session_t *mu, int fd, const char *username,
-                      access_mode_t access);
+                      access_mode_t access, bool is_guest);
 
 /* Remove user from session */
 void multiuser_remove_user(multiuser_session_t *mu, int fd);

@@ -22,7 +22,8 @@ typedef enum {
     CMD_REC_STOP,     // Stop recording
     CMD_REC_PLAY,     // Playback recording
     CMD_SHARE,        // Enable session sharing
-    CMD_JOIN          // Join shared session
+    CMD_JOIN,         // Join shared session
+    CMD_STOPSHARE     // Disable session sharing
 } command_t;
 
 typedef enum {
@@ -39,6 +40,11 @@ typedef struct {
     char session_name[256];
     char new_name[256];
     char shell[256];
+    char share_token[128];
+    char auth_wallet_address[128];
+    char auth_wallet_message[256];
+    char auth_wallet_signature[256];
+    char auth_ssh_key_id[128];
     int rows;
     int cols;
     bool no_attach;
@@ -75,7 +81,8 @@ typedef enum {
     MSG_REC_STOP = CMD_REC_STOP,
     MSG_REC_PLAY = CMD_REC_PLAY,
     MSG_SHARE = CMD_SHARE,
-    MSG_JOIN = CMD_JOIN
+    MSG_JOIN = CMD_JOIN,
+    MSG_STOPSHARE = CMD_STOPSHARE
 } msg_type_t;
 
 typedef enum {

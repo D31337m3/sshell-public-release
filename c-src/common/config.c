@@ -14,6 +14,28 @@
 
 config_t g_config;
 
+static void compose_path(char *out, size_t out_size, const char *base, const char *leaf) {
+    if (out_size == 0) {
+        return;
+    }
+
+    out[0] = '\0';
+    if (!base || !leaf) {
+        return;
+    }
+
+    strncpy(out, base, out_size - 1);
+    out[out_size - 1] = '\0';
+
+    size_t len = strlen(out);
+    if (len > 0 && out[len - 1] != '/' && len + 1 < out_size) {
+        out[len++] = '/';
+        out[len] = '\0';
+    }
+
+    strncat(out, leaf, out_size - strlen(out) - 1);
+}
+
 void config_init(void) {
     const char *home = getenv("HOME");
     if (!home) {
@@ -23,11 +45,11 @@ void config_init(void) {
     
     strncpy(g_config.home_dir, home, sizeof(g_config.home_dir) - 1);
     
-    snprintf(g_config.config_dir, sizeof(g_config.config_dir), "%s/.sshell", home);
-    snprintf(g_config.session_dir, sizeof(g_config.session_dir), "%s/sessions", g_config.config_dir);
-    snprintf(g_config.socket_path, sizeof(g_config.socket_path), "%s/daemon.sock", g_config.config_dir);
-    snprintf(g_config.pid_file, sizeof(g_config.pid_file), "%s/daemon.pid", g_config.config_dir);
-    snprintf(g_config.log_file, sizeof(g_config.log_file), "%s/daemon.log", g_config.config_dir);
+    compose_path(g_config.config_dir, sizeof(g_config.config_dir), home, ".sshell");
+    compose_path(g_config.session_dir, sizeof(g_config.session_dir), g_config.config_dir, "sessions");
+    compose_path(g_config.socket_path, sizeof(g_config.socket_path), g_config.config_dir, "daemon.sock");
+    compose_path(g_config.pid_file, sizeof(g_config.pid_file), g_config.config_dir, "daemon.pid");
+    compose_path(g_config.log_file, sizeof(g_config.log_file), g_config.config_dir, "daemon.log");
     
     const char *shell = getenv("SHELL");
     strncpy(g_config.default_shell, shell ? shell : "/bin/bash", sizeof(g_config.default_shell) - 1);

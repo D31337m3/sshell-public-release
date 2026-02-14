@@ -56,7 +56,10 @@ sshell
 sshell rec-start my-session
 
 # Share session
-sshell share my-session
+sshell --share my-session@host-name.com
+
+# Join shared session (guest)
+sshell share-XXXXXXXX@host-name.com
 
 # Web access
 firefox http://localhost:8080

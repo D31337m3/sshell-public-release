@@ -16,7 +16,7 @@
 #include <errno.h>
 
 int pty_create_session(session_t *session) {
-    int master_fd, slave_fd;
+    int master_fd;
     pid_t pid = forkpty(&master_fd, NULL, NULL, NULL);
     
     if (pid < 0) {

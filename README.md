@@ -1,7 +1,7 @@
 # 🚀 SShell - The Next-Generation Terminal Multiplexer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](https://github.com/d31337m3/sshell/releases)
+[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](https://github.com/d31337m3/sshell/releases)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/d31337m3/sshell)
 
 **Persistent sessions + Network roaming + Recording + Multi-user + Web viewer**
@@ -27,11 +27,14 @@ sshell play my-session 1.5  # 1.5x speed
 ### 👥 Multi-User Sessions
 True collaborative terminals
 ```bash
-# User 1
-sshell share my-session  # Returns token
+# User 1 (inviter): enable sharing (prints a share token)
+sshell --share my-session@host-name.com
 
-# User 2
-sshell join <token>      # Join session
+# User 2 (guest): join using token@host
+sshell share-XXXXXXXX@host-name.com
+
+# Inviter: stop sharing (disconnects guests)
+sshell --stopshare my-session@host-name.com
 ```
 
 ### 🌐 Web Viewer
@@ -49,8 +52,8 @@ curl -sSL https://d31337m3.com/sshell/install.sh | bash
 ```
 
 ### Manual Download
-- [Linux (x86_64)](https://d31337m3.com/sshell/sshell-linux-x86_64-v1.5.0.zip) - 33KB
-- [Windows (x86_64)](https://d31337m3.com/sshell/sshell-windows-x86_64-v1.5.0.zip) - 101KB
+- [Linux (x86_64)](https://d31337m3.com/sshell/sshell-linux-x86_64-v1.6.1.zip) - 33KB
+- [Windows (x86_64)](https://d31337m3.com/sshell/sshell-windows-x86_64-v1.6.1.zip) - 101KB
 - [Checksums](https://d31337m3.com/sshell/SHA256SUMS)
 
 ### Via pip (Python version)
@@ -113,12 +116,15 @@ sshell play my-session 2.0
 ```bash
 # User 1: Create and share session
 sshell new collab-session
-sshell share collab-session
-# Output: Share token: x7k9m2n5p8q3r6s1t4u7v2w9y5z8a3c1
+sshell --share collab-session@host-name.com
+# Output: share-4Tl3TR7OFnmtkb6VEUBOhw
 
 # User 2: Join session
-sshell join x7k9m2n5p8q3r6s1t4u7v2w9y5z8a3c1
+sshell share-4Tl3TR7OFnmtkb6VEUBOhw@host-name.com
 # Both users now see same terminal, both can type
+
+# User 1: Revoke sharing (kicks guests)
+sshell --stopshare collab-session@host-name.com
 ```
 
 ### Web Viewer
@@ -230,4 +236,4 @@ Inspired by:
 
 **SShell** - The terminal multiplexer for the modern age 🚀
 
-Built with ❤️ in C | Version 1.5.0 | © 2026
+Built with ❤️ in C | Version 1.6.1 | © 2026

@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='sshell',
-    version='1.5.0',
+    version='1.6.1',
     description='Next-generation terminal multiplexer with network roaming, recording, and multi-user support',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',

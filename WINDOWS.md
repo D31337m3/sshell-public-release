@@ -31,6 +31,16 @@ wsl --install
 
 # Inside WSL
 curl -sSL https://d31337m3.com/sshell/install.sh | bash
+
+# Examples (inside WSL)
+# Share a session (prints a share token)
+sshell --share my-session@host-name.com
+
+# Join as a guest
+sshell share-XXXXXXXX@host-name.com
+
+# Revoke sharing (inviter)
+sshell --stopshare my-session@host-name.com
 ```
 
 ## Creating Windows Release
@@ -39,5 +49,5 @@ curl -sSL https://d31337m3.com/sshell/install.sh | bash
 # Cross-compile from Linux
 apt-get install mingw-w64
 x86_64-w64-mingw32-gcc -o sshell.exe c-src/client/client_windows.c -lws2_32 -static
-zip sshell-windows-x86_64-v1.5.0.zip sshell.exe
+zip sshell-windows-x86_64-v1.6.1.zip sshell.exe
 ```

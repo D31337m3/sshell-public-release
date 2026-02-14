@@ -2,6 +2,8 @@
  * client_windows.c - SShell Windows client
  * 
  * Windows-compatible client using named pipes instead of Unix sockets
+ * Due to Windows limitations, this client only supports basic commands
+ * Wsl and unix client should be used for full functionality
  */
 
 #ifdef _WIN32
@@ -73,7 +75,7 @@ static HANDLE connect_daemon(void) {
 
 int main(int argc, char *argv[]) {
     if (argc > 1 && strcmp(argv[1], "--version") == 0) {
-        printf("SShell Windows Client v1.5.0\n");
+        printf("SSHell v1.6.1  -  (C) - D31337m3.com\n");
         return 0;
     }
     

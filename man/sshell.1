@@ -1,9 +1,15 @@
-.TH SSHELL 1 "February 2026" "SShell 1.0" "User Commands"
+.TH SSHELL 1 "February 2026" "SShell 1.6.1" "User Commands"
 .SH NAME
 sshell \- persistent shell session manager
 .SH SYNOPSIS
 .B sshell
 [\fI\,COMMAND\/\fR] [\fI\,OPTIONS\/\fR]
+.PP
+.B sshell
+\fI\,SESSION@HOST[:PORT]\/\fR
+.PP
+.B sshell
+\fI\,share-TOKEN@HOST[:PORT]\/\fR
 .SH DESCRIPTION
 .B sshell
 is a session manager that creates persistent shell sessions that survive
@@ -21,6 +27,9 @@ name is generated.
 .B sshell attach \fI\,TARGET\/\fR
 Attach to an existing session by name or ID.
 .TP
+.B sshell \fI\,SESSION@HOST[:PORT]\/\fR
+Attach to a session on a remote daemon over TCP.
+.TP
 .B sshell list
 List all active sessions with their status.
 .TP
@@ -32,13 +41,48 @@ Terminate a session by name or ID.
 .TP
 .B sshell rename \fI\,TARGET NEW_NAME\/\fR
 Rename a session to a new name.
+.TP
+.B sshell --share \fI\,SESSION@HOST[:PORT]\/\fR
+Enable sharing for a session and print a share token.
+.TP
+.B sshell \fI\,share-TOKEN@HOST[:PORT]\/\fR
+Join a shared collaborative session using the provided token.
+.TP
+.B sshell --stopshare [\fI\,SESSION@HOST[:PORT]\/\fR]
+Disable sharing (and disconnect guest users) for the specified session. If no
+session is provided, stops sharing for all sessions owned by the authenticated
+inviter on that daemon.
 .SH OPTIONS
+.TP
+.B \-\-host \fI\,HOST\/\fR
+Remote daemon host for TCP mode (default: 127.0.0.1).
+.TP
+.B \-\-port \fI\,PORT\/\fR
+Remote daemon TCP port (default: 7444).
+.TP
+.B \-\-unix
+Use Unix domain socket mode (legacy/local IPC).
+.TP
+.B \-\-socket \fI\,PATH\/\fR
+Override the Unix socket path.
 .TP
 .B \-s, \-\-shell \fI\,SHELL\/\fR
 Specify which shell to use (default: $SHELL or /bin/bash).
 .TP
 .B \-\-no-attach
 When creating a session, don't attach to it automatically.
+.TP
+.B \-\-wallet \fI\,ADDRESS\/\fR
+Wallet address used for daemon authentication (TCP mode).
+.TP
+.B \-\-wallet-message \fI\,MESSAGE\/\fR
+Wallet message text to verify.
+.TP
+.B \-\-wallet-signature \fI\,SIGNATURE\/\fR
+Wallet signature (0x...) of the message.
+.TP
+.B \-\-ssh-key-id \fI\,ID\/\fR
+SSH-key style fallback identity string (daemon allowlist required).
 .SH DETACHING
 While attached to a session, press \fBCtrl+B\fR followed by \fBd\fR to detach
 without killing the session. The session continues running in the background.
@@ -69,6 +113,15 @@ List all sessions:
 Attach to an existing session:
 .B sshell attach build-task
 .TP
+Enable session sharing and send token to a collaborator:
+.B sshell --share build-task@host-name.com
+.TP
+Join a shared session:
+.B sshell share-XXXXXXXX@host-name.com
+.TP
+Stop sharing (disconnect guests):
+.B sshell --stopshare build-task@host-name.com
+.TP
 Rename a session:
 .B sshell rename old-name new-name
 .TP
@@ -86,6 +139,6 @@ Error occurred
 .BR tmux (1),
 .BR screen (1)
 .SH BUGS
-Report bugs at https://github.com/yourusername/sshell
+Report bugs at https://github.com/d31337m3/sshell
 .SH AUTHOR
 SShell was written as a learning project for PTY management and session persistence.

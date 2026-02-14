@@ -22,8 +22,10 @@ COMMON_OBJS = $(BUILD_DIR)/session.o $(BUILD_DIR)/protocol.o \
 			  $(BUILD_DIR)/recording.o \
 			  $(BUILD_DIR)/daemon_preset.o
 
+WEBSERVER_OBJS = $(BUILD_DIR)/webserver.o
+
 # Daemon objects
-DAEMON_OBJS = $(BUILD_DIR)/daemon.o $(BUILD_DIR)/pty_manager.o $(COMMON_OBJS)
+DAEMON_OBJS = $(BUILD_DIR)/daemon.o $(BUILD_DIR)/pty_manager.o $(COMMON_OBJS) $(WEBSERVER_OBJS)
 
 # Client objects
 CLIENT_OBJS = $(BUILD_DIR)/client.o $(COMMON_OBJS)
@@ -71,6 +73,9 @@ $(BUILD_DIR)/recording.o: $(COMMON_SRC)/recording.c $(COMMON_SRC)/recording.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/daemon_preset.o: $(COMMON_SRC)/daemon_preset.c $(COMMON_SRC)/daemon_preset.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/webserver.o: $(COMMON_SRC)/webserver.c $(COMMON_SRC)/webserver.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Daemon objects

@@ -1,8 +1,8 @@
 # 🚀 SShell - The Next-Generation Terminal Multiplexer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](https://github.com/d31337m3/sshell/releases)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/d31337m3/sshell)
+[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](https://github.com/d31337m3/sshell-public-release/releases)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/d31337m3/sshell-public-release)
 
 **Persistent sessions + Network roaming + Recording + Multi-user + Web viewer**
 
@@ -54,8 +54,8 @@ curl -sSL https://d31337m3.com/sshell/install.sh | bash
 ```
 
 ### Manual Download
-- [Linux (x86_64)](https://d31337m3.com/sshell/sshell-linux-x86_64-v1.6.1.zip) - 33KB
-- [Windows (x86_64)](https://d31337m3.com/sshell/sshell-windows-x86_64-v1.6.1.zip) - 101KB
+- [Linux (x86_64)](https://d31337m3.com/sshell-public-release/) - 33KB
+- [Windows (x86_64)](Currently deprecated - reconsideration for WSL-only support)
 - [Checksums](https://d31337m3.com/sshell/SHA256SUMS)
 
 ### Via pip (Python version)

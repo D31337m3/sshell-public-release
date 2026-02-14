@@ -24,6 +24,11 @@ typedef struct {
     char eth_address[43];  // 0x + 40 hex chars
     bool authenticated;
     bool active;
+
+    /* Buffered PTY output (appended by daemon thread, flushed by lws thread) */
+    unsigned char *out_buf;
+    size_t out_len;
+    size_t out_cap;
 } ws_client_t;
 
 /* Initialize web server */
@@ -42,5 +47,8 @@ int webserver_send_to_client(webserver_t *server, const char *session_id,
 /* Broadcast to all clients on a session */
 int webserver_broadcast_to_session(webserver_t *server, const char *session_id,
                                    const char *data, size_t len);
+
+/* Return number of active authenticated web clients on a session */
+int webserver_get_session_client_count(webserver_t *server, const char *session_id);
 
 #endif /* SSHELL_WEBSERVER_H */

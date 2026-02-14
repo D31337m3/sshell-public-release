@@ -28,6 +28,13 @@ Bind host/IP for TCP mode (default: 0.0.0.0).
 .B \-\-port \fI\,PORT\/\fR
 Bind TCP port (default: 7444).
 .TP
+.B \-\-web
+Enable the web terminal (HTTP + WebSocket). Users authenticate with MetaMask
+personal_sign (same message/signature procedure as the CLI).
+.TP
+.B \-\-web-port \fI\,PORT\/\fR
+Web terminal listen port (default: 8080).
+.TP
 .B \-\-ufw-auto
 Attempt to open the TCP port in UFW (requires root and ufw installed).
 .TP

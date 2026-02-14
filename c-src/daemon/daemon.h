@@ -22,6 +22,20 @@ typedef struct {
     bool running;
 } daemon_t;
 
+/* Web terminal helpers (used by common/webserver.c) */
+bool daemon_web_is_authorized_wallet(const char *address,
+                                     const char *message,
+                                     const char *signature);
+
+/* Find a session by name or id; returns NULL if not found */
+session_t *daemon_find_session(daemon_t *daemon, const char *target);
+
+/* Write input bytes to a session PTY by session id; returns bytes written or -1 */
+ssize_t daemon_write_to_session(daemon_t *daemon,
+                               const char *session_id,
+                               const char *data,
+                               size_t len);
+
 /* Initialize daemon */
 int daemon_init(daemon_t *daemon);
 

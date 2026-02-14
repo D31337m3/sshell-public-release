@@ -8,6 +8,7 @@
 #include "../common/logger.h"
 #include "../common/metamask_auth.h"
 #include "../common/daemon_preset.h"
+#include "../common/webserver.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,7 @@
 #include <sys/select.h>
 #include <ctype.h>
 #include <json-c/json.h>
+#include <pthread.h>
 
 static daemon_t *g_daemon = NULL;
 static bool g_tcp_mode = true;
@@ -38,6 +40,11 @@ static bool g_auth_required = true;
 static char g_wallet_allowlist_path[512] = {0};
 static char g_ssh_allowlist_path[512] = {0};
 static char g_single_wallet[128] = {0};
+static bool g_web_enabled = false;
+static int g_web_port = WEB_PORT;
+static webserver_t g_webserver;
+static pthread_t g_web_thread;
+static bool g_web_thread_started = false;
 static log_level_t g_log_level = LOG_LEVEL_INFO;
 static time_t g_daemon_started_at = 0;
 
@@ -475,6 +482,105 @@ static bool is_authorized_request(const message_t *msg, bool peer_is_localhost) 
 
     log_warn("Auth required but no credentials provided");
     return false;
+}
+
+bool daemon_web_is_authorized_wallet(const char *address,
+                                     const char *message,
+                                     const char *signature) {
+    if (!address || !address[0] || !message || !message[0] || !signature || !signature[0]) {
+        return false;
+    }
+
+    /* Always require a valid signature for web clients. */
+    if (!metamask_verify_signature(address, message, signature)) {
+        return false;
+    }
+
+    /* If daemon auth is enabled, enforce the same allowlist/single-wallet rules. */
+    if (!g_auth_required) {
+        return true;
+    }
+
+    message_t msg;
+    memset(&msg, 0, sizeof(msg));
+    snprintf(msg.auth_wallet_address, sizeof(msg.auth_wallet_address), "%s", address);
+    snprintf(msg.auth_wallet_message, sizeof(msg.auth_wallet_message), "%s", message);
+    snprintf(msg.auth_wallet_signature, sizeof(msg.auth_wallet_signature), "%s", signature);
+    return is_authorized_request(&msg, false);
+}
+
+session_t *daemon_find_session(daemon_t *daemon, const char *target) {
+    if (!daemon || !target || !target[0]) {
+        return NULL;
+    }
+
+    session_t *s = find_session_by_id(daemon, target);
+    if (s) {
+        return s;
+    }
+    return find_session_by_name(daemon, target);
+}
+
+ssize_t daemon_write_to_session(daemon_t *daemon,
+                               const char *session_id,
+                               const char *data,
+                               size_t len) {
+    if (!daemon || !session_id || !session_id[0] || !data || len == 0) {
+        return -1;
+    }
+
+    session_t *session = find_session_by_id(daemon, session_id);
+    if (!session || session->master_fd < 0) {
+        return -1;
+    }
+
+    ssize_t w = write(session->master_fd, data, len);
+    if (w > 0) {
+        session_update_activity(session);
+    }
+    return w;
+}
+
+static void *web_thread_main(void *arg) {
+    webserver_t *server = (webserver_t *)arg;
+    (void)webserver_run(server);
+    return NULL;
+}
+
+static void webserver_start_if_enabled(daemon_t *daemon) {
+    if (!g_web_enabled) {
+        return;
+    }
+
+    if (!g_tcp_mode) {
+        log_warn("Web terminal requested but daemon is not in TCP mode; web disabled");
+        return;
+    }
+
+    if (webserver_init(&g_webserver, g_web_port, daemon) < 0) {
+        log_error("Failed to start web terminal on port %d", g_web_port);
+        return;
+    }
+
+    if (pthread_create(&g_web_thread, NULL, web_thread_main, &g_webserver) == 0) {
+        g_web_thread_started = true;
+        log_info("Web terminal enabled: http://%s:%d/", g_bind_host, g_web_port);
+    } else {
+        log_error("Failed to create web terminal thread");
+        webserver_stop(&g_webserver);
+    }
+}
+
+static void webserver_stop_if_running(void) {
+    if (!g_web_enabled) {
+        return;
+    }
+
+    webserver_stop(&g_webserver);
+    if (g_web_thread_started) {
+        pthread_join(g_web_thread, NULL);
+        g_web_thread_started = false;
+    }
 }
 
 static void send_basic_response(int client_fd, status_t status, const char *text) {
@@ -1140,7 +1246,12 @@ static void daemon_event_loop(daemon_t *daemon) {
                 continue;
             }
 
-            bool watch_pty = (mu->user_count > 0) || recording_is_active(&daemon->recordings[i]);
+            int web_users = 0;
+            if (g_web_enabled) {
+                web_users = webserver_get_session_client_count(&g_webserver, session->id);
+            }
+
+            bool watch_pty = (mu->user_count > 0) || (web_users > 0) || recording_is_active(&daemon->recordings[i]);
             if (!watch_pty) {
                 continue;
             }
@@ -1204,7 +1315,12 @@ static void daemon_event_loop(daemon_t *daemon) {
                 continue;
             }
 
-            bool watch_pty = (mu->user_count > 0) || recording_is_active(&daemon->recordings[i]);
+            int web_users = 0;
+            if (g_web_enabled) {
+                web_users = webserver_get_session_client_count(&g_webserver, session->id);
+            }
+
+            bool watch_pty = (mu->user_count > 0) || (web_users > 0) || recording_is_active(&daemon->recordings[i]);
             if (!watch_pty) {
                 continue;
             }
@@ -1233,6 +1349,10 @@ static void daemon_event_loop(daemon_t *daemon) {
                             continue;
                         }
                         u++;
+                    }
+
+                    if (g_web_enabled) {
+                        (void)webserver_broadcast_to_session(&g_webserver, session->id, buffer, (size_t)n);
                     }
                 } else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
                     for (int u = 0; u < mu->user_count; u++) {
@@ -1311,8 +1431,12 @@ int daemon_start(daemon_t *daemon) {
 
     configure_ufw_if_enabled();
 
+    webserver_start_if_enabled(daemon);
+
     daemon->running = true;
     daemon_event_loop(daemon);
+
+    webserver_stop_if_running();
 
     return 0;
 }
@@ -1393,6 +1517,18 @@ int main(int argc, char **argv) {
             snprintf(g_ssh_allowlist_path, sizeof(g_ssh_allowlist_path), "%s", argv[++i]);
         } else if (strcmp(argv[i], "--insecure-no-auth") == 0) {
             g_auth_required = false;
+        } else if (strcmp(argv[i], "--web") == 0) {
+            g_web_enabled = true;
+        } else if (strcmp(argv[i], "--web-port") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --web-port requires a value\n");
+                return 1;
+            }
+            g_web_port = atoi(argv[++i]);
+            if (g_web_port <= 0 || g_web_port > 65535) {
+                fprintf(stderr, "Error: invalid --web-port value\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--wallet") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Error: --wallet requires an address\n");
@@ -1420,6 +1556,8 @@ int main(int argc, char **argv) {
             printf("  --unix           Listen on Unix socket mode\n");
             printf("  --host HOST      Bind host/IP for TCP mode (default: 0.0.0.0)\n");
             printf("  --port PORT      Bind TCP port (default: 7444)\n");
+            printf("  --web            Enable web terminal (HTTP+WebSocket)\n");
+            printf("  --web-port PORT  Web terminal port (default: 8080)\n");
             printf("  --ufw-auto       Auto-open TCP port in UFW (requires root)\n");
             printf("  --wallet-allowlist PATH  Authorized wallet addresses (one per line)\n");
             printf("  --wallet ADDRESS         Single authorized wallet address\n");

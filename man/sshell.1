@@ -1,0 +1,91 @@
+.TH SSHELL 1 "February 2026" "SShell 1.0" "User Commands"
+.SH NAME
+sshell \- persistent shell session manager
+.SH SYNOPSIS
+.B sshell
+[\fI\,COMMAND\/\fR] [\fI\,OPTIONS\/\fR]
+.SH DESCRIPTION
+.B sshell
+is a session manager that creates persistent shell sessions that survive
+SSH disconnections. Similar to tmux or screen, but simpler and focused on
+basic session persistence.
+.SH COMMANDS
+.TP
+.B sshell
+Create a new session and attach to it immediately.
+.TP
+.B sshell new [\fI\,NAME\/\fR]
+Create a new session with optional name. If no name is provided, a unique
+name is generated.
+.TP
+.B sshell attach \fI\,TARGET\/\fR
+Attach to an existing session by name or ID.
+.TP
+.B sshell list
+List all active sessions with their status.
+.TP
+.B sshell ls
+Alias for 'list'.
+.TP
+.B sshell kill \fI\,TARGET\/\fR
+Terminate a session by name or ID.
+.TP
+.B sshell rename \fI\,TARGET NEW_NAME\/\fR
+Rename a session to a new name.
+.SH OPTIONS
+.TP
+.B \-s, \-\-shell \fI\,SHELL\/\fR
+Specify which shell to use (default: $SHELL or /bin/bash).
+.TP
+.B \-\-no-attach
+When creating a session, don't attach to it automatically.
+.SH DETACHING
+While attached to a session, press \fBCtrl+B\fR followed by \fBd\fR to detach
+without killing the session. The session continues running in the background.
+.SH FILES
+.TP
+.I ~/.sshell/daemon.sock
+Unix domain socket for client-daemon communication.
+.TP
+.I ~/.sshell/daemon.pid
+PID file for the daemon process.
+.TP
+.I ~/.sshell/daemon.log
+Daemon log file.
+.TP
+.I ~/.sshell/sessions/
+Directory containing session metadata files.
+.SH EXAMPLES
+.TP
+Create and attach to a new session:
+.B sshell
+.TP
+Create a named session for a build task:
+.B sshell new build-task
+.TP
+List all sessions:
+.B sshell list
+.TP
+Attach to an existing session:
+.B sshell attach build-task
+.TP
+Rename a session:
+.B sshell rename old-name new-name
+.TP
+Kill a session:
+.B sshell kill build-task
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+Error occurred
+.SH SEE ALSO
+.BR sshell-daemon (8),
+.BR tmux (1),
+.BR screen (1)
+.SH BUGS
+Report bugs at https://github.com/yourusername/sshell
+.SH AUTHOR
+SShell was written as a learning project for PTY management and session persistence.

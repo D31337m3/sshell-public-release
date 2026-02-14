@@ -1,0 +1,29 @@
+# Build artifacts
+build/
+*.o
+*.so
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# User data
+.sshell/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Release files (keep in releases/)
+!releases/

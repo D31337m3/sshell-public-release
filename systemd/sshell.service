@@ -1,0 +1,26 @@
+[Unit]
+Description=SShell Persistent Session Daemon
+Documentation=man:sshell(1) man:sshell-daemon(8)
+After=network.target
+
+[Service]
+Type=forking
+PIDFile=%h/.sshell/daemon.pid
+ExecStart=/usr/local/bin/sshell-daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+
+# Security settings
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.sshell
+
+# Resource limits
+LimitNOFILE=4096
+LimitNPROC=512
+
+[Install]
+WantedBy=default.target

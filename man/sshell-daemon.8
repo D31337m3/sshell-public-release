@@ -1,0 +1,80 @@
+.TH SSHELL-DAEMON 8 "February 2026" "SShell 1.0" "System Administration"
+.SH NAME
+sshell-daemon \- SShell session management daemon
+.SH SYNOPSIS
+.B sshell-daemon
+[\fI\,--no-fork\/\fR]
+.SH DESCRIPTION
+.B sshell-daemon
+is the background daemon that manages persistent shell sessions for SShell.
+It handles session creation, attachment, detachment, and cleanup.
+.PP
+The daemon is typically started automatically by the \fBsshell\fR client when
+needed. It can also be run as a systemd user service for automatic startup.
+.SH OPTIONS
+.TP
+.B \-\-no-fork
+Do not daemonize. Run in foreground (useful for debugging).
+.SH SIGNALS
+.TP
+.B SIGTERM, SIGINT
+Gracefully shutdown the daemon. All sessions are preserved and can be
+reattached after the daemon restarts.
+.TP
+.B SIGCHLD
+Handled internally to track session process termination.
+.TP
+.B SIGALRM
+Triggers periodic cleanup of dead and idle sessions.
+.SH FILES
+.TP
+.I ~/.sshell/daemon.sock
+Unix domain socket for client communication.
+.TP
+.I ~/.sshell/daemon.pid
+Contains the PID of the running daemon.
+.TP
+.I ~/.sshell/daemon.log
+Log file for daemon messages.
+.TP
+.I ~/.sshell/sessions/*.json
+Session metadata files.
+.SH CONFIGURATION
+The daemon behavior can be customized by modifying the configuration
+in ~/.sshell/config (if implemented).
+.TP
+.B max_sessions
+Maximum number of concurrent sessions per user (default: 10).
+.TP
+.B session_timeout
+Idle timeout in seconds for sessions (0 = no timeout, default: 0).
+.TP
+.B auto_cleanup_dead
+Automatically remove dead sessions (default: true).
+.SH SECURITY
+The daemon runs with the same privileges as the user who started it.
+Session data and the communication socket are protected with 0600 permissions,
+ensuring only the owning user can access sessions.
+.SH SYSTEMD INTEGRATION
+To run as a systemd user service:
+.PP
+.nf
+.RS
+systemctl --user enable sshell
+systemctl --user start sshell
+.RE
+.fi
+.SH EXIT STATUS
+.TP
+.B 0
+Daemon shutdown gracefully
+.TP
+.B 1
+Error occurred during startup
+.SH SEE ALSO
+.BR sshell (1),
+.BR systemd (1)
+.SH BUGS
+Report bugs at https://github.com/yourusername/sshell
+.SH AUTHOR
+SShell was written as a learning project for PTY management and session persistence.

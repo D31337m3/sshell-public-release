@@ -8,6 +8,11 @@
 
 SShell is a feature-rich terminal multiplexer that combines the best of tmux, screen, mosh, and tmate - with unique competitive features.
 
+========Critical Security Update=========
+A Crititcal Security release has been published (022226) - V.1.7.0
+  Please update using to the latest version v1.7.0 by downloading the whole release or 
+  simply run the update-sshell.sh file from the repository.
+
 ## ✨ Key Features
 
 ### 🌐 Network Roaming

@@ -36,8 +36,8 @@ typedef struct {
 /* Initialize multi-user session */
 int multiuser_init(multiuser_session_t *mu);
 
-/* Enable sharing and generate token */
-int multiuser_enable_sharing(multiuser_session_t *mu, char *token_out);
+/* Enable sharing and generate token; token_out may be NULL */
+int multiuser_enable_sharing(multiuser_session_t *mu, char *token_out, size_t token_out_size);
 
 /* Disable sharing */
 void multiuser_disable_sharing(multiuser_session_t *mu);

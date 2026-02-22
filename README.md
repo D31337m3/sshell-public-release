@@ -1,7 +1,7 @@
 # 🚀 SShell - The Next-Generation Terminal Multiplexer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-1.6.1-blue.svg)](https://github.com/d31337m3/sshell-public-release/releases)
+[![Version](https://img.shields.io/badge/version-1.6.3-blue.svg)](https://github.com/d31337m3/sshell-public-release/releases)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/d31337m3/sshell-public-release)
 
 **Persistent sessions + Network roaming + Recording + Multi-user + Web viewer**
@@ -46,22 +46,28 @@ Access terminals from any browser
 - Live WebSocket streaming
 - http://localhost:8080
 
+> **Thread safety:** The web terminal uses `daemon_lookup_session_id()` (copies the session ID under a mutex) to safely pass session references to the HTTP/WebSocket handler thread, preventing use-after-free on concurrent session operations.
+
 ## 📦 Installation
 
 ### Quick Install (Linux/macOS)
 ```bash
+# Interactive wizard (recommended — guides you through network, auth, and feature choices)
 curl -sSL https://d31337m3.com/sshell/install.sh | bash
+
+# Non-interactive / scripted installs — uses safe defaults, no prompts
+curl -sSL https://d31337m3.com/sshell/install.sh | bash -s -- -y
+
+# Server install — adds the daemon with safe defaults
+curl -sSL https://d31337m3.com/sshell/install.sh | bash -s -- --daemon
 ```
+
+The interactive wizard guides you through five steps: install type, network binding, authentication method, optional features (web terminal, roaming, systemd autostart), and a confirmation summary. It writes a fully configured `~/.sshell/daemon.json` from your answers.
 
 ### Manual Download
-- [Linux (x86_64)](https://d31337m3.com/sshell-public-release/) - 33KB
-- [Windows (x86_64)](Currently deprecated - reconsideration for WSL-only support)
+- [Linux (x86_64)](https://d31337m3.com/sshell-public-release/) - 33KB (also works inside WSL)
+- Windows: native daemon is not currently shipped; use WSL for full functionality, or build the limited `sshell.exe` client (see WINDOWS.md)
 - [Checksums](https://d31337m3.com/sshell/SHA256SUMS)
-
-### Via pip (Python version)
-```bash
-pip install sshell
-```
 
 ### Build from Source
 ```bash
@@ -117,7 +123,12 @@ Example:
   "mode": "tcp",
   "host": "0.0.0.0",
   "port": 7444,
+  "auth_required": true,
   "wallet": "0x...",
+  "wallet_allowlist": "~/.sshell/allowed_wallets.txt",
+  "web_enabled": false,
+  "web_port": 8080,
+  "roaming": true,
   "log_level": "info"
 }
 ```
@@ -176,7 +187,7 @@ sshell --stopshare collab-session@host-name.com
 
 ```
 ┌─────────────────────────────────────────┐
-│     SShell Daemon (Phase 5 Enhanced)    │
+│            SShell Daemon                │
 ├─────────────────────────────────────────┤
 │  ┌──────────────┐  ┌─────────────────┐ │
 │  │ Unix Socket  │  │ UDP Port 60001  │ │
@@ -202,7 +213,6 @@ sshell --stopshare collab-session@host-name.com
 
 - [Complete Features](FEATURES.md) - Detailed feature overview
 - [Security Notes](SECURITY.md) - Recommended safe defaults for TCP mode
-- [Phase 5 Implementation](PHASE5_IMPLEMENTATION.md) - Technical details
 - [Windows Support](WINDOWS.md) - Windows build instructions
 - Man pages: `man sshell`, `man sshell-daemon`
 
@@ -252,4 +262,4 @@ Inspired by:
 
 **SShell** - The terminal multiplexer for the modern age 🚀
 
-Built with ❤️ in C | Version 1.6.1 | © 2026
+Built with ❤️ in C | Version 1.6.3 | © 2026

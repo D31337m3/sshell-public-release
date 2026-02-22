@@ -23,7 +23,7 @@ Listen on TCP (default).
 Listen on a Unix domain socket.
 .TP
 .B \-\-host \fI\,HOST\/\fR
-Bind host/IP for TCP mode (default: 0.0.0.0).
+Bind host/IP for TCP mode (default: 127.0.0.1).
 .TP
 .B \-\-port \fI\,PORT\/\fR
 Bind TCP port (default: 7444).
@@ -55,6 +55,12 @@ Log verbosity (debug|info|warn|error).
 .TP
 .B \-\-debug
 Alias for \fB--log-level debug\fR.
+.TP
+.B \-\-roaming-port \fI\,PORT\/\fR
+UDP port for the network roaming heartbeat (default: 60001).
+.TP
+.B \-\-no-roaming
+Disable network roaming (UDP heartbeat will not be started).
 .SH SIGNALS
 .TP
 .B SIGTERM, SIGINT
@@ -94,6 +100,10 @@ from it at startup (CLI flags override). Example:
 	"ufw_auto": true,
 	"auth_required": true,
 	"wallet": "0x...",
+	"wallet_allowlist": "~/.sshell/allowed_wallets.txt",
+	"web_enabled": false,
+	"web_port": 8080,
+	"roaming": true,
 	"log_level": "info"
 }
 .fi
@@ -139,4 +149,4 @@ Error occurred during startup
 .SH BUGS
 Report bugs at https://github.com/d31337m3/sshell
 .SH AUTHOR
-SShell was written as a learning project for PTY management and session persistence.
+SShell Contributors

@@ -19,18 +19,25 @@ Example secure starter config (safe-by-default):
   "mode": "tcp",
   "host": "0.0.0.0",
   "port": 7444,
-  "ufw_auto": true,
   "auth_required": true,
+  "wallet": "0x...",
+  "wallet_allowlist": "~/.sshell/allowed_wallets.txt",
+  "web_enabled": false,
+  "web_port": 8080,
+  "roaming": true,
+  "ufw_auto": true,
   "log_level": "info"
 }
 ```
 
 Notes:
+- `wallet` and `wallet_allowlist` are mutually exclusive — configure one or the other, not both.
 - With `auth_required: true` and **no allowlists configured**, the daemon will reject remote requests. Localhost may still be allowed.
 - To actually allow remote access, configure either:
   - `wallet` (single wallet gate), or
   - `wallet_allowlist` path (one wallet address per line), or
   - `ssh_allowlist` path (one identity string per line).
+- The interactive installer (`install.sh`) guides you through auth configuration in its wizard (Step 3). Use `-y` / `--yes` to skip the wizard and accept safe defaults.
 
 ## Wallet authentication
 

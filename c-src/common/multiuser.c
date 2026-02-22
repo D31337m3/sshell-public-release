@@ -44,13 +44,14 @@ int multiuser_init(multiuser_session_t *mu) {
     return 0;
 }
 
-int multiuser_enable_sharing(multiuser_session_t *mu, char *token_out) {
+int multiuser_enable_sharing(multiuser_session_t *mu, char *token_out, size_t token_out_size) {
     generate_token(mu->share_token, TOKEN_LENGTH);
     mu->sharing_enabled = true;
     mu->share_owner_id[0] = '\0';
     
-    if (token_out) {
-        strcpy(token_out, mu->share_token);
+    if (token_out && token_out_size > 0) {
+        strncpy(token_out, mu->share_token, token_out_size - 1);
+        token_out[token_out_size - 1] = '\0';
     }
     
     log_info("Sharing enabled with token: %s", mu->share_token);

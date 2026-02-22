@@ -12,9 +12,13 @@ sshell \- persistent shell session manager
 \fI\,share-TOKEN@HOST[:PORT]\/\fR
 .SH DESCRIPTION
 .B sshell
-is a session manager that creates persistent shell sessions that survive
-SSH disconnections. Similar to tmux or screen, but simpler and focused on
-basic session persistence.
+is a feature-rich terminal multiplexer that creates persistent shell sessions
+surviving network disconnections. It combines session persistence (tmux/screen),
+network roaming (mosh), session recording (asciinema), multi-user collaboration
+(tmate), and a web terminal viewer — all in a single lightweight binary.
+.TP
+.B \-\-window
+Launch SShell client in a separate terminal window (requires X11 and xterm).
 .SH COMMANDS
 .TP
 .B sshell
@@ -156,4 +160,4 @@ Error occurred
 .SH BUGS
 Report bugs at https://github.com/d31337m3/sshell
 .SH AUTHOR
-SShell was written as a learning project for PTY management and session persistence.
+SShell Contributors

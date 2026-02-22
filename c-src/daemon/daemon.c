@@ -9,6 +9,7 @@
 #include "../common/metamask_auth.h"
 #include "../common/daemon_preset.h"
 #include "../common/webserver.h"
+#include "../common/network_roaming.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,9 +32,20 @@
 #include <json-c/json.h>
 #include <pthread.h>
 
+/* Guard FD_SET against FD_SETSIZE overflow (fd must be < FD_SETSIZE). */
+#define SAFE_FD_SET(fd, set, maxfd) do { \
+    if ((fd) < FD_SETSIZE) { \
+        FD_SET((fd), (set)); \
+        if ((fd) > (maxfd)) { (maxfd) = (fd); } \
+    } else { \
+        log_error("fd %d >= FD_SETSIZE (%d); cannot monitor - restart daemon or migrate to poll()", \
+                  (fd), FD_SETSIZE); \
+    } \
+} while (0)
+
 static daemon_t *g_daemon = NULL;
 static bool g_tcp_mode = true;
-static char g_bind_host[256] = "0.0.0.0";
+static char g_bind_host[256] = "127.0.0.1";  /* Safe default: localhost only */
 static int g_bind_port = 7444;
 static bool g_ufw_auto = false;
 static bool g_auth_required = true;
@@ -47,6 +59,9 @@ static pthread_t g_web_thread;
 static bool g_web_thread_started = false;
 static log_level_t g_log_level = LOG_LEVEL_INFO;
 static time_t g_daemon_started_at = 0;
+static bool g_roaming_enabled = true;
+static int g_roaming_port = ROAMING_PORT;
+static roaming_server_t g_roaming;
 
 static void signal_handler(int sig) {
     (void)sig;
@@ -67,6 +82,7 @@ int daemon_init(daemon_t *daemon) {
     memset(daemon, 0, sizeof(*daemon));
     daemon->server_fd = -1;
     daemon->running = false;
+    pthread_mutex_init(&daemon->sessions_lock, NULL);
 
     for (int i = 0; i < MAX_SESSIONS; i++) {
         multiuser_init(&daemon->multiuser[i]);
@@ -515,10 +531,34 @@ session_t *daemon_find_session(daemon_t *daemon, const char *target) {
     }
 
     session_t *s = find_session_by_id(daemon, target);
-    if (s) {
-        return s;
+    if (!s) {
+        s = find_session_by_name(daemon, target);
     }
-    return find_session_by_name(daemon, target);
+    return s;
+}
+
+/*
+ * Thread-safe helper for the webserver thread: looks up a session by name/id
+ * and copies its ID into id_out.  Returns true if found.
+ */
+bool daemon_lookup_session_id(daemon_t *daemon, const char *target,
+                              char *id_out, size_t id_out_size) {
+    if (!daemon || !target || !target[0] || !id_out || id_out_size == 0) {
+        return false;
+    }
+
+    pthread_mutex_lock(&daemon->sessions_lock);
+    session_t *s = find_session_by_id(daemon, target);
+    if (!s) {
+        s = find_session_by_name(daemon, target);
+    }
+    bool found = (s != NULL);
+    if (found) {
+        strncpy(id_out, s->id, id_out_size - 1);
+        id_out[id_out_size - 1] = '\0';
+    }
+    pthread_mutex_unlock(&daemon->sessions_lock);
+    return found;
 }
 
 ssize_t daemon_write_to_session(daemon_t *daemon,
@@ -529,8 +569,10 @@ ssize_t daemon_write_to_session(daemon_t *daemon,
         return -1;
     }
 
+    pthread_mutex_lock(&daemon->sessions_lock);
     session_t *session = find_session_by_id(daemon, session_id);
     if (!session || session->master_fd < 0) {
+        pthread_mutex_unlock(&daemon->sessions_lock);
         return -1;
     }
 
@@ -538,6 +580,7 @@ ssize_t daemon_write_to_session(daemon_t *daemon,
     if (w > 0) {
         session_update_activity(session);
     }
+    pthread_mutex_unlock(&daemon->sessions_lock);
     return w;
 }
 
@@ -994,7 +1037,7 @@ static void handle_share(daemon_t *daemon, const message_t *msg, int client_fd, 
         snprintf(mu->share_token, sizeof(mu->share_token), "%s", msg->share_token);
         mu->sharing_enabled = true;
     } else {
-        multiuser_enable_sharing(mu, NULL);
+        multiuser_enable_sharing(mu, NULL, 0);
     }
 
     response_t resp = {0};
@@ -1237,7 +1280,12 @@ static void daemon_event_loop(daemon_t *daemon) {
         FD_ZERO(&readfds);
 
         int maxfd = daemon->server_fd;
-        FD_SET(daemon->server_fd, &readfds);
+        SAFE_FD_SET(daemon->server_fd, &readfds, maxfd);
+
+        /* Watch roaming UDP socket when enabled. */
+        if (g_roaming_enabled && g_roaming.running && g_roaming.udp_fd >= 0) {
+            SAFE_FD_SET(g_roaming.udp_fd, &readfds, maxfd);
+        }
 
         for (int i = 0; i < daemon->session_count; i++) {
             session_t *session = daemon->sessions[i];
@@ -1256,20 +1304,14 @@ static void daemon_event_loop(daemon_t *daemon) {
                 continue;
             }
 
-            FD_SET(session->master_fd, &readfds);
-            if (session->master_fd > maxfd) {
-                maxfd = session->master_fd;
-            }
+            SAFE_FD_SET(session->master_fd, &readfds, maxfd);
 
             if (mu->user_count > 0) {
                 for (int u = 0; u < mu->user_count; u++) {
                     if (!mu->users[u].active) {
                         continue;
                     }
-                    FD_SET(mu->users[u].fd, &readfds);
-                    if (mu->users[u].fd > maxfd) {
-                        maxfd = mu->users[u].fd;
-                    }
+                    SAFE_FD_SET(mu->users[u].fd, &readfds, maxfd);
                 }
             }
         }
@@ -1289,6 +1331,12 @@ static void daemon_event_loop(daemon_t *daemon) {
         if (FD_ISSET(daemon->server_fd, &readfds)) {
             int client_fd = accept(daemon->server_fd, NULL, NULL);
             if (client_fd >= 0) {
+                /* Keep-alive detects silent TCP drops. */
+                if (g_tcp_mode) {
+                    int one = 1;
+                    setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+                }
+
                 bool peer_is_localhost = !g_tcp_mode;
                 if (g_tcp_mode) {
                     struct sockaddr_storage addr;
@@ -1306,6 +1354,13 @@ static void daemon_event_loop(daemon_t *daemon) {
                 }
                 (void)handle_client(daemon, client_fd, peer_is_localhost);
             }
+        }
+
+        /* Process roaming heartbeat packets. */
+        if (g_roaming_enabled && g_roaming.running && g_roaming.udp_fd >= 0 &&
+            FD_ISSET(g_roaming.udp_fd, &readfds)) {
+            roaming_server_process(&g_roaming);
+            roaming_cleanup_expired(&g_roaming);
         }
 
         for (int i = 0; i < daemon->session_count; i++) {
@@ -1431,12 +1486,26 @@ int daemon_start(daemon_t *daemon) {
 
     configure_ufw_if_enabled();
 
+    /* Start network roaming server (UDP heartbeat) in TCP mode. */
+    if (g_tcp_mode && g_roaming_enabled) {
+        memset(&g_roaming, 0, sizeof(g_roaming));
+        g_roaming.udp_fd = -1;
+        if (roaming_server_init(&g_roaming, g_roaming_port) < 0) {
+            log_warn("Network roaming server failed to start on UDP port %d (continuing without roaming)", g_roaming_port);
+            g_roaming_enabled = false;
+        }
+    }
+
     webserver_start_if_enabled(daemon);
 
     daemon->running = true;
     daemon_event_loop(daemon);
 
     webserver_stop_if_running();
+
+    if (g_roaming_enabled && g_roaming.running) {
+        roaming_server_shutdown(&g_roaming);
+    }
 
     return 0;
 }
@@ -1468,6 +1537,7 @@ void daemon_cleanup(daemon_t *daemon) {
             daemon->sessions[i] = NULL;
         }
     }
+    pthread_mutex_destroy(&daemon->sessions_lock);
 }
 
 int main(int argc, char **argv) {
@@ -1547,6 +1617,18 @@ int main(int argc, char **argv) {
                 return 1;
             }
             g_log_level = level;
+        } else if (strcmp(argv[i], "--no-roaming") == 0) {
+            g_roaming_enabled = false;
+        } else if (strcmp(argv[i], "--roaming-port") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --roaming-port requires a value\n");
+                return 1;
+            }
+            g_roaming_port = atoi(argv[++i]);
+            if (g_roaming_port <= 0 || g_roaming_port > 65535) {
+                fprintf(stderr, "Error: invalid --roaming-port value\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--debug") == 0) {
             g_log_level = LOG_LEVEL_DEBUG;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -1554,7 +1636,7 @@ int main(int argc, char **argv) {
             printf("  -f, --no-fork    Run in foreground\n");
             printf("  --tcp            Listen on TCP mode (default)\n");
             printf("  --unix           Listen on Unix socket mode\n");
-            printf("  --host HOST      Bind host/IP for TCP mode (default: 0.0.0.0)\n");
+            printf("  --host HOST      Bind host/IP for TCP mode (default: 127.0.0.1; use 0.0.0.0 for remote access)\n");
             printf("  --port PORT      Bind TCP port (default: 7444)\n");
             printf("  --web            Enable web terminal (HTTP+WebSocket)\n");
             printf("  --web-port PORT  Web terminal port (default: 8080)\n");
@@ -1563,6 +1645,8 @@ int main(int argc, char **argv) {
             printf("  --wallet ADDRESS         Single authorized wallet address\n");
             printf("  --ssh-allowlist PATH     Authorized ssh-key IDs (one per line)\n");
             printf("  --insecure-no-auth       Disable auth checks (NOT recommended)\n");
+            printf("  --roaming-port PORT      UDP port for network roaming heartbeat (default: %d)\n", ROAMING_PORT);
+            printf("  --no-roaming             Disable network roaming (UDP heartbeat) server\n");
             printf("  --log-level LEVEL        Log verbosity (debug|info|warn|error)\n");
             printf("  --debug                  Alias for --log-level debug\n");
             printf("  -h, --help       Show this help\n");

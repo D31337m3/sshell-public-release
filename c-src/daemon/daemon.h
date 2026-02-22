@@ -9,6 +9,7 @@
 #include "../common/protocol.h"
 #include "../common/multiuser.h"
 #include "../common/recording.h"
+#include <pthread.h>
 
 #define MAX_SESSIONS 100
 
@@ -20,6 +21,7 @@ typedef struct {
     int session_count;
     int server_fd;
     bool running;
+    pthread_mutex_t sessions_lock; /* protects sessions[], multiuser[], session_count */
 } daemon_t;
 
 /* Web terminal helpers (used by common/webserver.c) */
@@ -27,8 +29,14 @@ bool daemon_web_is_authorized_wallet(const char *address,
                                      const char *message,
                                      const char *signature);
 
-/* Find a session by name or id; returns NULL if not found */
+/* Find a session by name or id; returns NULL if not found.
+ * Must be called from the main daemon thread (no locking). */
 session_t *daemon_find_session(daemon_t *daemon, const char *target);
+
+/* Thread-safe lookup: finds session by name/id and copies its ID string.
+ * Safe to call from any thread. Returns true if found. */
+bool daemon_lookup_session_id(daemon_t *daemon, const char *target,
+                              char *id_out, size_t id_out_size);
 
 /* Write input bytes to a session PTY by session id; returns bytes written or -1 */
 ssize_t daemon_write_to_session(daemon_t *daemon,

@@ -3,6 +3,8 @@
  */
 
 #include "../common/config.h"
+#include "../common/daemon_preset.h"
+#include "../common/network_roaming.h"
 #include "../common/protocol.h"
 #include "../common/session.h"
 #include "../common/terminal.h"
@@ -18,6 +20,8 @@
 #include <errno.h>
 #include <signal.h>
 #include <time.h>
+#include <limits.h>
+#include <pthread.h>
 #include <openssl/rand.h>
 #include <json-c/json.h>
 
@@ -36,8 +40,137 @@ static char g_auth_ssh_key_id[128] = {0};
 static int connect_daemon(void);
 static void apply_auth(message_t *msg);
 static void send_resize(const char *session_id);
+static bool is_local_host(const char *host);
 
 static void print_usage(const char *prog);
+
+static bool g_cli_set_host = false;
+
+/* ── Network roaming heartbeat ────────────────────────────────────────────── */
+
+typedef struct {
+    char session_id[64];
+    char host[256];
+    int  roaming_port;
+    volatile bool stop;
+} heartbeat_args_t;
+
+static pthread_t       g_heartbeat_tid;
+static bool            g_heartbeat_running = false;
+static heartbeat_args_t g_heartbeat_args;
+
+static void *heartbeat_thread(void *arg) {
+    heartbeat_args_t *a = (heartbeat_args_t *)arg;
+    uint32_t seq = 0;
+
+    int udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp_fd < 0) {
+        return NULL;
+    }
+
+    struct addrinfo hints = {0}, *result = NULL;
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", a->roaming_port);
+    if (getaddrinfo(a->host, port_str, &hints, &result) != 0 || !result) {
+        close(udp_fd);
+        return NULL;
+    }
+
+    while (!a->stop) {
+        /* Format: "session_id:seq_num" */
+        char pkt[96];
+        snprintf(pkt, sizeof(pkt), "%s:%u", a->session_id, seq++);
+        sendto(udp_fd, pkt, strlen(pkt), 0, result->ai_addr, result->ai_addrlen);
+
+        /* Sleep HEARTBEAT_INTERVAL seconds in 200 ms chunks to check stop flag. */
+        int sleep_chunks = (HEARTBEAT_INTERVAL * 1000) / 200;
+        for (int i = 0; i < sleep_chunks && !a->stop; i++) {
+            usleep(200000);
+        }
+    }
+
+    freeaddrinfo(result);
+    close(udp_fd);
+    return NULL;
+}
+
+static void start_heartbeat(const char *session_id, const char *host, int roaming_port) {
+    if (g_heartbeat_running) return;
+    memset(&g_heartbeat_args, 0, sizeof(g_heartbeat_args));
+    snprintf(g_heartbeat_args.session_id, sizeof(g_heartbeat_args.session_id), "%s", session_id);
+    snprintf(g_heartbeat_args.host, sizeof(g_heartbeat_args.host), "%s", host);
+    g_heartbeat_args.roaming_port = roaming_port;
+    g_heartbeat_args.stop = false;
+    if (pthread_create(&g_heartbeat_tid, NULL, heartbeat_thread, &g_heartbeat_args) == 0) {
+        g_heartbeat_running = true;
+    }
+}
+
+static void stop_heartbeat(void) {
+    if (!g_heartbeat_running) return;
+    g_heartbeat_args.stop = true;
+    pthread_join(g_heartbeat_tid, NULL);
+    g_heartbeat_running = false;
+}
+
+/* ── end roaming heartbeat ────────────────────────────────────────────────── */
+
+static bool g_cli_set_port = false;
+static bool g_cli_set_mode = false;
+
+static void daemon_preset_path(char *out, size_t out_size) {
+    if (!out || out_size == 0) {
+        return;
+    }
+    snprintf(out, out_size, "%s/daemon.json", g_config.config_dir);
+}
+
+static bool is_unspecified_bind_host(const char *host) {
+    if (!host) {
+        return false;
+    }
+    return strcmp(host, "0.0.0.0") == 0 || strcmp(host, "::") == 0;
+}
+
+static void apply_daemon_preset_defaults_if_needed(void) {
+    /* Only apply presets if user did not explicitly choose host/port/mode.
+       This helps keep client+daemon in sync when ~/.sshell/daemon.json changes defaults. */
+    if (g_cli_set_mode || g_cli_set_host || g_cli_set_port) {
+        return;
+    }
+
+    /* Presets are local-daemon defaults; don't rewrite remote connection targets. */
+    if (!is_local_host(g_remote_host)) {
+        return;
+    }
+
+    char preset_path[1024] = {0};
+    daemon_preset_path(preset_path, sizeof(preset_path));
+
+    daemon_preset_t preset;
+    if (!daemon_preset_load(preset_path, &preset)) {
+        return;
+    }
+
+    if (preset.has_tcp_mode) {
+        g_use_unix_socket = !preset.tcp_mode;
+    }
+
+    if (!g_use_unix_socket) {
+        if (preset.has_host && preset.host[0]) {
+            if (is_unspecified_bind_host(preset.host)) {
+                snprintf(g_remote_host, sizeof(g_remote_host), "%s", "127.0.0.1");
+            } else {
+                snprintf(g_remote_host, sizeof(g_remote_host), "%s", preset.host);
+            }
+        }
+        if (preset.has_port) {
+            g_remote_port = preset.port;
+        }
+    }
+}
 
 typedef enum {
     IR_EXIT = 0,
@@ -766,25 +899,61 @@ static int start_daemon(void) {
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
         
-        /* Execute daemon */
+        /* Execute daemon (best-effort; try common install and release locations).
+         * Note: parent will verify by attempting to connect.
+         */
+        char port_text[16];
+        snprintf(port_text, sizeof(port_text), "%d", g_remote_port);
+
+        /* 1) Prefer a daemon shipped alongside this client binary (release bundle). */
+        {
+            char self_path[PATH_MAX];
+            ssize_t n = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
+            if (n > 0) {
+                self_path[n] = '\0';
+                char *slash = strrchr(self_path, '/');
+                if (slash) {
+                    *slash = '\0';
+                    char daemon_path[PATH_MAX];
+                    int wrote = snprintf(daemon_path, sizeof(daemon_path), "%s/sshell-daemon", self_path);
+                    if (wrote > 0 && (size_t)wrote < sizeof(daemon_path)) {
+                        if (g_use_unix_socket) {
+                            execl(daemon_path, "sshell-daemon", "--unix", NULL);
+                        } else {
+                            execl(daemon_path, "sshell-daemon", "--tcp", "--port", port_text, NULL);
+                        }
+                    }
+                }
+            }
+        }
+
+        /* 2) PATH lookup (typical install). */
         if (g_use_unix_socket) {
+            execlp("sshell-daemon", "sshell-daemon", "--unix", NULL);
+        } else {
+            execlp("sshell-daemon", "sshell-daemon", "--tcp", "--port", port_text, NULL);
+        }
+
+        /* 3) Legacy name used by some builds. */
+        if (g_use_unix_socket) {
+            execlp("sshell-daemon-c", "sshell-daemon-c", "--unix", NULL);
             execl("/usr/local/bin/sshell-daemon-c", "sshell-daemon-c", "--unix", NULL);
+        } else {
+            execlp("sshell-daemon-c", "sshell-daemon-c", "--tcp", "--port", port_text, NULL);
+            execl("/usr/local/bin/sshell-daemon-c", "sshell-daemon-c", "--tcp", "--port", port_text, NULL);
+        }
+
+        /* 4) Common absolute/relative fallbacks. */
+        if (g_use_unix_socket) {
+            execl("/usr/local/bin/sshell-daemon", "sshell-daemon", "--unix", NULL);
+            execl("/usr/bin/sshell-daemon", "sshell-daemon", "--unix", NULL);
+            execl("./sshell-daemon", "sshell-daemon", "--unix", NULL);
             execl("./.build/sshell-daemon", "sshell-daemon", "--unix", NULL);
         } else {
-            char port_text[16];
-            snprintf(port_text, sizeof(port_text), "%d", g_remote_port);
-            execl("/usr/local/bin/sshell-daemon-c",
-                  "sshell-daemon-c",
-                  "--tcp",
-                  "--port",
-                  port_text,
-                  NULL);
-            execl("./.build/sshell-daemon",
-                  "sshell-daemon",
-                  "--tcp",
-                  "--port",
-                  port_text,
-                  NULL);
+            execl("/usr/local/bin/sshell-daemon", "sshell-daemon", "--tcp", "--port", port_text, NULL);
+            execl("/usr/bin/sshell-daemon", "sshell-daemon", "--tcp", "--port", port_text, NULL);
+            execl("./sshell-daemon", "sshell-daemon", "--tcp", "--port", port_text, NULL);
+            execl("./.build/sshell-daemon", "sshell-daemon", "--tcp", "--port", port_text, NULL);
         }
         _exit(1);
     }
@@ -823,6 +992,14 @@ static int ensure_daemon_running(void) {
                 "Error: Cannot connect to remote daemon at %s:%d\n",
                 g_remote_host,
                 g_remote_port);
+        if (is_local_host(g_remote_host)) {
+            fprintf(stderr,
+                "Tip: start the daemon manually, then retry. Example:\n"
+                "  sshell-daemon --tcp --port %d\n"
+                "  (or from an extracted release folder: ./sshell-daemon --tcp --port %d)\n",
+                g_remote_port,
+                g_remote_port);
+        }
         return -1;
     }
 
@@ -831,14 +1008,13 @@ static int ensure_daemon_running(void) {
         close(sockfd);
         return 0;
     }
-    
-    /* Daemon not running, start it */
-    printf("Starting SShell daemon...\n");
+
+    fprintf(stderr, "SShell: No local daemon found. Attempting to start daemon...\n");
     if (start_daemon() < 0) {
-        fprintf(stderr, "Error: Failed to start daemon\n");
+        fprintf(stderr, "SShell: Error - Failed to start daemon.\n");
         return -1;
     }
-    
+
     /* Try connecting again */
     for (int i = 0; i < 5; i++) {
         sleep(1);
@@ -848,8 +1024,8 @@ static int ensure_daemon_running(void) {
             return 0;
         }
     }
-    
-    fprintf(stderr, "Error: Daemon did not start successfully\n");
+
+    fprintf(stderr, "SShell: Error - Daemon did not start successfully.\n");
     return -1;
 }
 
@@ -948,6 +1124,11 @@ static void run_multisession_ui(void) {
         }
         ui_draw_bars(&st);
 
+        /* Start UDP roaming heartbeat when connected over TCP to a non-loopback host. */
+        if (!g_use_unix_socket && !is_local_host(g_ui_host) && g_ui_session_id[0]) {
+            start_heartbeat(g_ui_session_id, g_ui_host, ROAMING_PORT);
+        }
+
         char resize_id[64] = {0};
         snprintf(resize_id, sizeof(resize_id), "%s", g_ui_session_id[0] ? g_ui_session_id : entry->target);
 
@@ -958,6 +1139,7 @@ static void run_multisession_ui(void) {
                                      resize_id,
                                      allow_resize);
         close(sockfd);
+        stop_heartbeat();
 
         if (result == IR_SWITCH_LEFT || result == IR_SWITCH_RIGHT) {
             int dir = (result == IR_SWITCH_LEFT) ? -1 : 1;
@@ -1415,12 +1597,28 @@ int main(int argc, char *argv[]) {
             return 0;
         }
 
+        // New: --window mode launches client in a separate terminal window
+        if (strcmp(arg, "--window") == 0) {
+            // Only supported on Linux/WSL/X11
+            const char *xterm = getenv("DISPLAY") ? "xterm" : NULL;
+            if (xterm) {
+                char cmd[1024];
+                snprintf(cmd, sizeof(cmd), "xterm -e '%s %s' &", argv[0], argc > 2 ? argv[2] : "");
+                system(cmd);
+                return 0;
+            } else {
+                fprintf(stderr, "--window mode requires X11 (DISPLAY set) and xterm installed.\n");
+                return 1;
+            }
+        }
+
         if (strcmp(arg, "--host") == 0) {
             if (command_index + 1 >= argc) {
                 fprintf(stderr, "Error: --host requires a value\n");
                 return 1;
             }
             g_use_unix_socket = false;
+            g_cli_set_host = true;
             snprintf(g_remote_host, sizeof(g_remote_host), "%s", argv[command_index + 1]);
             command_index += 2;
             continue;
@@ -1438,12 +1636,14 @@ int main(int argc, char *argv[]) {
             }
             g_use_unix_socket = false;
             g_remote_port = p;
+            g_cli_set_port = true;
             command_index += 2;
             continue;
         }
 
         if (strcmp(arg, "--unix") == 0) {
             g_use_unix_socket = true;
+            g_cli_set_mode = true;
             command_index += 1;
             continue;
         }
@@ -1454,6 +1654,7 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             snprintf(g_unix_socket_path, sizeof(g_unix_socket_path), "%s", argv[command_index + 1]);
+            g_cli_set_mode = true;
             command_index += 2;
             continue;
         }
@@ -1500,6 +1701,8 @@ int main(int argc, char *argv[]) {
 
         break;
     }
+
+    apply_daemon_preset_defaults_if_needed();
 
     if (command_index >= argc) {
         cmd_new(NULL, NULL, false);

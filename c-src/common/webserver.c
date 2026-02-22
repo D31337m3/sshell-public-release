@@ -354,8 +354,8 @@ static int callback_websocket(struct lws *wsi, enum lws_callback_reasons reason,
                         break;
                     }
 
-                    session_t *sess = daemon_find_session(daemon, target);
-                    if (!sess) {
+                    char found_id[SESSION_ID_LEN];
+                    if (!daemon_lookup_session_id(daemon, target, found_id, sizeof(found_id))) {
                         const char *err = "{\"type\":\"error\",\"message\":\"session not found\"}";
                         (void)ws_send_json(wsi, err, strlen(err));
                         json_object_put(root);
@@ -363,7 +363,7 @@ static int callback_websocket(struct lws *wsi, enum lws_callback_reasons reason,
                     }
 
                     snprintf(client->eth_address, sizeof(client->eth_address), "%s", addr);
-                    snprintf(client->session_id, sizeof(client->session_id), "%s", sess->id);
+                    snprintf(client->session_id, sizeof(client->session_id), "%s", found_id);
                     client->authenticated = true;
 
                     const char *ok = "{\"type\":\"auth_ok\"}";

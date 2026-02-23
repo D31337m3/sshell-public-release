@@ -174,3 +174,35 @@ Use this file as a chronological, append-only log. Do not edit past entries exce
 - **Why:** Keep docs in sync with code changes; reflect new interactive installer
 - **Verification:** `bash -n install.sh` → syntax OK; `make test` → all tests pass
 - **Next:** Remote internet terminal acceptance test (Definition of Done)
+
+---
+
+- **Timestamp (UTC):** 2026-02-23
+- **Goal:** Full end-to-end test of typical use routine; document results; improve --window X11 mode
+- **What changed:**
+  - `Makefile`: Added `network_roaming.o` build rule and included it in `COMMON_OBJS` (fixes linker error in sshell-daemon); added `TEST_MULTIUSER_BIN` build rule with correct link flags (`-lssl -lcrypto`); updated `test` target to build and run unit tests (`test_multiuser`) and end-to-end shell tests
+  - `tests/test_e2e.sh`: New automated end-to-end test script covering: daemon startup, list (empty), session create, list (present), rename, list (renamed), kill, list (empty), duplicate-name rejection (9 tests)
+  - `c-src/client/client.c`: Replaced unsafe `system()` in `--window` mode with `fork()`+`execvp("xterm", ...)` — eliminates shell injection vulnerability; properly forwards all argv (minus `--window`) so auth flags (`--wallet`, `--ssh-key-id`, `--host`, `--port`) and session arguments are passed through to the new xterm window; uses `setsid()` to detach child from parent terminal; sets xterm window title to "SShell"
+  - `.gitignore`: Added `.build/` to excluded paths (was only `build/` before)
+- **Why:** Codify the smoke-test routine as a repeatable automated test; fix security vulnerability in --window mode; fix broken build due to missing network_roaming linkage
+- **Verification:**
+  - `make clean && make -j` → 0 errors, pre-existing warnings only
+  - `make test` → all 9 E2E tests passed, multiuser unit tests passed
+  - E2E test results (2026-02-23):
+    - PASS: Daemon started and accepting connections
+    - PASS: List returns empty table
+    - PASS: Session 'smoke-test' created
+    - PASS: Session 'smoke-test' appears in list
+    - PASS: Session renamed successfully
+    - PASS: Renamed session 'smoke-renamed' appears in list
+    - PASS: Session killed
+    - PASS: Session list is empty after kill
+    - PASS: Duplicate session name rejected
+    - Results: 9 passed, 0 failed
+- **Notes/Risks:**
+  - `--window` mode (X11 GUI) forwards all authentication flags and session args; sessions remain in daemon after xterm closes — re-attachable via `sshell attach <name>`
+  - X11 window launch requires `DISPLAY` to be set and `xterm` installed; prints a clear error otherwise
+  - The `--window` fix uses `execvp("xterm", ...)` which requires xterm on PATH; other X11 terminals (gnome-terminal, konsole, etc.) are not yet supported but the approach can be extended
+- **Next:**
+  - Consider supporting alternative X11 terminals (gnome-terminal, konsole) via `--window-term` flag
+  - Remote internet terminal acceptance test

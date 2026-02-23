@@ -1597,19 +1597,53 @@ int main(int argc, char *argv[]) {
             return 0;
         }
 
-        // New: --window mode launches client in a separate terminal window
+        /* --window: launch this client in a separate xterm window (X11 only).
+         * All remaining arguments (minus --window) are forwarded.
+         * Uses fork+execvp to avoid shell injection vulnerabilities. */
         if (strcmp(arg, "--window") == 0) {
-            // Only supported on Linux/WSL/X11
-            const char *xterm = getenv("DISPLAY") ? "xterm" : NULL;
-            if (xterm) {
-                char cmd[1024];
-                snprintf(cmd, sizeof(cmd), "xterm -e '%s %s' &", argv[0], argc > 2 ? argv[2] : "");
-                system(cmd);
-                return 0;
-            } else {
+            const char *display = getenv("DISPLAY");
+            if (!display || !display[0]) {
                 fprintf(stderr, "--window mode requires X11 (DISPLAY set) and xterm installed.\n");
                 return 1;
             }
+
+            /* Build argv: xterm -title "SShell" -e <self> [all args except --window]
+             * Worst-case size: 5 fixed slots + (argc-1) forwarded args + 1 NULL = argc+5.
+             * Allocate argc+6 to keep one slot of margin. */
+            char **xterm_argv = malloc(((size_t)argc + 6) * sizeof(char *));
+            if (!xterm_argv) {
+                fprintf(stderr, "sshell: --window: failed to allocate argument list: %s\n",
+                        strerror(errno));
+                return 1;
+            }
+
+            int xi = 0;
+            xterm_argv[xi++] = "xterm";
+            xterm_argv[xi++] = "-title";
+            xterm_argv[xi++] = "SShell";
+            xterm_argv[xi++] = "-e";
+            xterm_argv[xi++] = argv[0];  /* self path */
+            for (int j = 1; j < argc; j++) {
+                if (strcmp(argv[j], "--window") != 0) {
+                    xterm_argv[xi++] = argv[j];
+                }
+            }
+            xterm_argv[xi] = NULL;
+
+            pid_t win_pid = fork();
+            if (win_pid < 0) {
+                perror("fork");
+                free(xterm_argv);
+                return 1;
+            }
+            if (win_pid == 0) {
+                /* Child: detach from parent session and exec xterm */
+                setsid();
+                execvp("xterm", xterm_argv);
+                _exit(1);
+            }
+            free(xterm_argv);
+            return 0;
         }
 
         if (strcmp(arg, "--host") == 0) {

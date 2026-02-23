@@ -18,7 +18,14 @@ network roaming (mosh), session recording (asciinema), multi-user collaboration
 (tmate), and a web terminal viewer — all in a single lightweight binary.
 .TP
 .B \-\-window
-Launch SShell client in a separate terminal window (requires X11 and xterm).
+Launch SShell in a separate X11 terminal window via
+.BR xterm (1).
+All other flags and arguments (authentication, host, port, session name) are
+forwarded to the new window instance.  The spawned session is fully persistent
+— closing the window or detaching with Ctrl+B d leaves the session running in
+the daemon and it can be re-attached from any terminal using
+.BR sshell\ attach .
+Requires \fBDISPLAY\fR to be set and \fBxterm\fR installed.
 .SH COMMANDS
 .TP
 .B sshell
@@ -146,6 +153,12 @@ Rename a session:
 .TP
 Kill a session:
 .B sshell kill build-task
+.TP
+Open a session in a new X11 terminal window:
+.B sshell --window attach build-task
+.TP
+Create and open a session in a new X11 terminal window with TCP auth:
+.B sshell --window --host myserver.com --port 7444 new work-session
 .SH EXIT STATUS
 .TP
 .B 0

@@ -20,7 +20,8 @@ COMMON_OBJS = $(BUILD_DIR)/session.o $(BUILD_DIR)/protocol.o \
 			  $(BUILD_DIR)/logger.o $(BUILD_DIR)/metamask_auth.o \
 			  $(BUILD_DIR)/multiuser.o \
 			  $(BUILD_DIR)/recording.o \
-			  $(BUILD_DIR)/daemon_preset.o
+			  $(BUILD_DIR)/daemon_preset.o \
+			  $(BUILD_DIR)/network_roaming.o
 
 WEBSERVER_OBJS = $(BUILD_DIR)/webserver.o
 
@@ -37,6 +38,10 @@ PLAYER_OBJS = $(BUILD_DIR)/player.o $(COMMON_OBJS)
 DAEMON_BIN = $(BUILD_DIR)/sshell-daemon
 CLIENT_BIN = $(BUILD_DIR)/sshell
 PLAYER_BIN = $(BUILD_DIR)/sshell-player
+
+# Test binaries
+TEST_MULTIUSER_BIN = $(BUILD_DIR)/test_multiuser
+TEST_MULTIUSER_OBJS = tests/test_multiuser.c $(BUILD_DIR)/multiuser.o
 
 .PHONY: all clean install test strip phase5
 
@@ -73,6 +78,9 @@ $(BUILD_DIR)/recording.o: $(COMMON_SRC)/recording.c $(COMMON_SRC)/recording.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/daemon_preset.o: $(COMMON_SRC)/daemon_preset.c $(COMMON_SRC)/daemon_preset.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/network_roaming.o: $(COMMON_SRC)/network_roaming.c $(COMMON_SRC)/network_roaming.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/webserver.o: $(COMMON_SRC)/webserver.c $(COMMON_SRC)/webserver.h
@@ -130,9 +138,16 @@ install: all strip
 	@echo "Detach: Press Ctrl+B then 'd'"
 	@echo "==================================================================="
 
-test: all
+test: all $(TEST_MULTIUSER_BIN)
 	@echo "Running basic tests..."
 	@./$(DAEMON_BIN) --version
 	@./$(CLIENT_BIN) --version
+	@echo "Running unit tests..."
+	@./$(TEST_MULTIUSER_BIN)
+	@echo "Running end-to-end tests..."
+	@bash tests/test_e2e.sh $(DAEMON_BIN) $(CLIENT_BIN)
+
+$(TEST_MULTIUSER_BIN): tests/test_multiuser.c $(BUILD_DIR)/multiuser.o $(BUILD_DIR)/logger.o
+	$(CC) $(CFLAGS) -o $@ tests/test_multiuser.c $(BUILD_DIR)/multiuser.o $(BUILD_DIR)/logger.o -lssl -lcrypto
 
 .DEFAULT_GOAL := all
